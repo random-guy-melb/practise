@@ -264,7 +264,8 @@ def compare_methods(df, save_path,
                 results['Num Groups'].append(num_groups)
 
                 print(f"\nSample groupings:")
-                result_df.to_csv(save_path + f"/{config_name}_{prep_method}_{threshold}.csv", index=False)
+                config_name_replaced = config_name.replace(":", "")
+                result_df.to_csv(save_path + f"/{config_name_replaced}_{prep_method}_{threshold}.csv", index=False)
                 print(f"Execution time: {execution_time:.2f}s")
                 print(f"Average group size: {avg_group_size:.2f}")
                 print(f"Number of unique groups: {num_groups}")
