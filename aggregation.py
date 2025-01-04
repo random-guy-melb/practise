@@ -1,4 +1,3 @@
-# [Previous imports remain the same]
 import pandas as pd
 import numpy as np
 import re
@@ -12,7 +11,7 @@ import nltk
 import time
 from typing import Dict, List, Union
 
-# [Previous NLTK setup and preprocessing functions remain the same]
+# NLTK setup
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
@@ -45,24 +44,16 @@ def advanced_preprocess(text):
 
 class SimilarityMatcher:
     def __init__(self, preprocessing_method='basic'):
-        """
-        Initialize the matcher with specified preprocessing method.
-
-        Args:
-            preprocessing_method (str): 'basic' or 'advanced'
-        """
         self.tfidf_vectorizer = TfidfVectorizer()
         self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
         self.preprocessing_method = preprocessing_method
 
     def preprocess_text(self, text):
-        """Preprocess text using the selected method."""
         if self.preprocessing_method == 'advanced':
             return advanced_preprocess(text)
         return basic_preprocess(text)
 
     def calculate_fuzzy_similarity(self, text1, text2):
-        """Calculate similarity using fuzzy matching."""
         proc_text1 = self.preprocess_text(text1)
         proc_text2 = self.preprocess_text(text2)
 
@@ -84,37 +75,16 @@ class SimilarityMatcher:
         return weighted_score / 100
 
     def calculate_tfidf_similarity(self, texts):
-        """Calculate similarity matrix using TF-IDF."""
         processed_texts = [self.preprocess_text(text) for text in texts]
         tfidf_matrix = self.tfidf_vectorizer.fit_transform(processed_texts)
         return cosine_similarity(tfidf_matrix)
 
     def calculate_transformer_similarity(self, texts):
-        """Calculate similarity matrix using Sentence Transformers."""
         processed_texts = [self.preprocess_text(text) for text in texts]
         embeddings = self.sentence_transformer.encode(processed_texts)
         return cosine_similarity(embeddings)
 
-    def calculate_hybrid_similarity(self,
-                                    text1: str,
-                                    text2: str,
-                                    methods: Dict[str, float],
-                                    similarity_matrices: Dict[str, np.ndarray] = None,
-                                    indices: tuple = None) -> float:
-        """
-        Calculate hybrid similarity using multiple methods with weights.
-
-        Args:
-            text1: First text
-            text2: Second text
-            methods: Dictionary of method names and their weights
-                    e.g., {'fuzzy': 0.3, 'tfidf': 0.3, 'transformer': 0.4}
-            similarity_matrices: Pre-computed similarity matrices for tfidf and transformer
-            indices: Tuple of indices for looking up values in similarity matrices
-
-        Returns:
-            float: Weighted similarity score
-        """
+    def calculate_hybrid_similarity(self, text1, text2, methods, similarity_matrices=None, indices=None):
         similarity_scores = []
         weights = []
 
@@ -133,154 +103,115 @@ class SimilarityMatcher:
         if not similarity_scores:
             return 0
 
-        # Normalize weights to sum to 1
         weights = np.array(weights) / sum(weights)
         return np.average(similarity_scores, weights=weights)
 
-    def group_problems(self,
-                       df: pd.DataFrame,
-                       method: Union[str, Dict[str, float]] = 'fuzzy',
-                       threshold: float = 0.85) -> pd.DataFrame:
+    def group_problems(self, df, method='fuzzy', threshold=0.85):
         """
-        Group similar problems using specified method(s).
+        Group similar problems based on Short Description and Resolution Type.
 
         Args:
-            df: Input DataFrame
-            method: Either a string ('fuzzy', 'tfidf', 'transformer') or a dictionary
-                   of methods and their weights for hybrid approach
-            threshold: Similarity threshold (0-1)
+            df: DataFrame with 'Short Description' and 'Resolution Type' columns
+            method: Similarity method or hybrid configuration
+            threshold: Similarity threshold
 
         Returns:
-            pd.DataFrame: Processed DataFrame with grouped codes
+            DataFrame with grouped resolution types and matching descriptions
         """
         result_df = df.copy()
-        result_df['processed_description'] = df['Problem Description'].apply(self.preprocess_text)
+        result_df['processed_description'] = df['Short Description'].apply(self.preprocess_text)
 
-        # Handle hybrid method
+        # Initialize tracking dictionaries
+        similarity_matrices = {}
+        problem_groups = defaultdict(set)
+        matching_details = defaultdict(list)  # Track matching descriptions and their indices
+        processed_indices = set()
+
+        # Pre-compute similarity matrices for hybrid method
         if isinstance(method, dict):
-            # Pre-compute similarity matrices for tfidf and transformer if needed
-            similarity_matrices = {}
-            texts = result_df['Problem Description'].tolist()
-
+            texts = result_df['Short Description'].tolist()
             if 'tfidf' in method:
                 similarity_matrices['tfidf'] = self.calculate_tfidf_similarity(texts)
             if 'transformer' in method:
                 similarity_matrices['transformer'] = self.calculate_transformer_similarity(texts)
 
-            # Use hybrid similarity calculation
-            problem_groups = defaultdict(set)
-            processed_indices = set()
+        # Main grouping logic
+        for i, row1 in df.iterrows():
+            if i in processed_indices:
+                continue
 
-            for i, row1 in df.iterrows():
-                if i in processed_indices:
-                    continue
+            desc1 = row1['Short Description']
+            type1 = row1['Resolution Type']
+            current_group = {type1}
+            current_matches = []  # Track matches for current description
 
-                desc1 = row1['Problem Description']
-                code1 = row1['Resolution Code']
-                current_group = {code1}
+            for j, row2 in df.iloc[i + 1:].iterrows():
+                desc2 = row2['Short Description']
+                type2 = row2['Resolution Type']
 
-                for j, row2 in df.iloc[i + 1:].iterrows():
-                    desc2 = row2['Problem Description']
-                    code2 = row2['Resolution Code']
-
+                # Calculate similarity based on method
+                if isinstance(method, dict):
                     similarity = self.calculate_hybrid_similarity(
                         desc1, desc2, method, similarity_matrices, (i, j)
                     )
-
-                    if similarity >= threshold:
-                        current_group.add(code2)
-                        processed_indices.add(j)
-
-                problem_groups[i] = current_group
-
-        else:
-            # Original single method logic
-            if method in ['tfidf', 'transformer']:
-                texts = result_df['Problem Description'].tolist()
-                if method == 'tfidf':
-                    similarity_matrix = self.calculate_tfidf_similarity(texts)
+                elif method == 'fuzzy':
+                    similarity = self.calculate_fuzzy_similarity(desc1, desc2)
                 else:
-                    similarity_matrix = self.calculate_transformer_similarity(texts)
+                    similarity = similarity_matrices.get(method,
+                                                         self.calculate_tfidf_similarity([desc1, desc2]))[0, 1]
 
-            problem_groups = defaultdict(set)
-            processed_indices = set()
+                if similarity >= threshold:
+                    current_group.add(type2)
+                    processed_indices.add(j)
+                    current_matches.append({
+                        'index': j,
+                        'description': desc2,
+                        'similarity': similarity
+                    })
 
-            for i, row1 in df.iterrows():
-                if i in processed_indices:
-                    continue
+            problem_groups[i] = current_group
+            matching_details[i] = current_matches
 
-                desc1 = row1['Problem Description']
-                code1 = row1['Resolution Code']
-                current_group = {code1}
+        # Create output columns
+        grouped_types = []
+        matching_info = []
 
-                for j, row2 in df.iloc[i + 1:].iterrows():
-                    desc2 = row2['Problem Description']
-                    code2 = row2['Resolution Code']
-
-                    if method == 'fuzzy':
-                        similarity = self.calculate_fuzzy_similarity(desc1, desc2)
-                    else:
-                        similarity = similarity_matrix[i, j]
-
-                    if similarity >= threshold:
-                        current_group.add(code2)
-                        processed_indices.add(j)
-
-                problem_groups[i] = current_group
-
-        # Assign resolution codes
-        grouped_codes = []
         for i, row in df.iterrows():
             if i in problem_groups:
-                grouped_codes.append(sorted(list(problem_groups[i])))
+                grouped_types.append(sorted(list(problem_groups[i])))
+                matches = matching_details[i]
+                match_info = [
+                    f"Index {m['index']}: '{m['description']}' (similarity: {m['similarity']:.2f})"
+                    for m in matches
+                ]
+                matching_info.append(match_info if match_info else ['No matches'])
             else:
-                found_group = False
-                for group_idx, codes in problem_groups.items():
-                    if isinstance(method, dict):
-                        similarity = self.calculate_hybrid_similarity(
-                            row['Problem Description'],
-                            df.loc[group_idx, 'Problem Description'],
-                            method,
-                            similarity_matrices,
-                            (i, group_idx)
-                        )
-                    elif method == 'fuzzy':
-                        similarity = self.calculate_fuzzy_similarity(
-                            row['Problem Description'],
-                            df.loc[group_idx, 'Problem Description']
-                        )
-                    else:
-                        similarity = similarity_matrix[i, group_idx]
+                grouped_types.append([row['Resolution Type']])
+                matching_info.append(['No matches'])
 
-                    if similarity >= threshold:
-                        grouped_codes.append(sorted(list(codes)))
-                        found_group = True
-                        break
-                if not found_group:
-                    grouped_codes.append([row['Resolution Code']])
+        result_df['Grouped Resolution Types'] = grouped_types
+        result_df['Matching Descriptions'] = matching_info
 
-        result_df['Resolution Codes'] = grouped_codes
-        return result_df[['Problem Description', 'processed_description', 'Resolution Code', 'Resolution Codes']]
+        return result_df[['Short Description', 'processed_description', 'Resolution Type',
+                          'Grouped Resolution Types', 'Matching Descriptions']]
 
 
-def compare_methods(df, thresholds=[0.85], preprocessing_methods=['basic', 'advanced'],
-                    hybrid_configs=None):
+def compare_methods(df, save_path,
+                    thresholds=[0.85],
+                    preprocessing_methods=['basic', 'advanced'],
+                    hybrid_configs=None,
+                    methods=['fuzzy', 'tfidf', 'transformer']):
     """
-    Compare different similarity methods, preprocessing approaches, and hybrid configurations.
+    Compare different similarity methods with the updated column names.
 
     Args:
-        df: Input DataFrame
-        thresholds: List of threshold values to try
-        preprocessing_methods: List of preprocessing methods to try
-        hybrid_configs: List of dictionaries containing hybrid method configurations
-                       e.g., [{'fuzzy': 0.3, 'transformer': 0.7}, ...]
+        df: DataFrame with 'Short Description' and 'Resolution Type' columns
+        thresholds: List of threshold values
+        preprocessing_methods: List of preprocessing methods
+        hybrid_configs: List of hybrid method configurations
     """
-    methods = ['fuzzy', 'tfidf', 'transformer']
-    results = defaultdict(list)
 
-    # Add hybrid configurations if provided
-    if hybrid_configs is None:
-        hybrid_configs = []
+    results = defaultdict(list)
 
     for prep_method in preprocessing_methods:
         matcher = SimilarityMatcher(preprocessing_method=prep_method)
@@ -294,8 +225,8 @@ def compare_methods(df, thresholds=[0.85], preprocessing_methods=['basic', 'adva
                 result_df = matcher.group_problems(df, method=method, threshold=threshold)
                 execution_time = time.time() - start_time
 
-                avg_group_size = np.mean([len(codes) for codes in result_df['Resolution Codes']])
-                num_groups = len(set(tuple(codes) for codes in result_df['Resolution Codes']))
+                avg_group_size = np.mean([len(codes) for codes in result_df['Grouped Resolution Types']])
+                num_groups = len(set(tuple(codes) for codes in result_df['Grouped Resolution Types']))
 
                 results['Preprocessing'].append(prep_method)
                 results['Method'].append(method)
@@ -304,9 +235,9 @@ def compare_methods(df, thresholds=[0.85], preprocessing_methods=['basic', 'adva
                 results['Avg Group Size'].append(avg_group_size)
                 results['Num Groups'].append(num_groups)
 
-                print(f"\nSample groupings ({method}, {prep_method} preprocessing, threshold={threshold}):")
-                print(result_df.head())
-                print(f"\nExecution time: {execution_time:.2f}s")
+                print(f"\nSample groupings:")
+                result_df.to_csv(save_path + f"/{method}_{prep_method}_{threshold}.csv", index=False)
+                print(f"Execution time: {execution_time:.2f}s")
                 print(f"Average group size: {avg_group_size:.2f}")
                 print(f"Number of unique groups: {num_groups}")
 
@@ -322,8 +253,8 @@ def compare_methods(df, thresholds=[0.85], preprocessing_methods=['basic', 'adva
                 result_df = matcher.group_problems(df, method=hybrid_config, threshold=threshold)
                 execution_time = time.time() - start_time
 
-                avg_group_size = np.mean([len(codes) for codes in result_df['Resolution Codes']])
-                num_groups = len(set(tuple(codes) for codes in result_df['Resolution Codes']))
+                avg_group_size = np.mean([len(codes) for codes in result_df['Grouped Resolution Types']])
+                num_groups = len(set(tuple(codes) for codes in result_df['Grouped Resolution Types']))
 
                 results['Preprocessing'].append(prep_method)
                 results['Method'].append(f"hybrid_{config_name}")
@@ -332,9 +263,9 @@ def compare_methods(df, thresholds=[0.85], preprocessing_methods=['basic', 'adva
                 results['Avg Group Size'].append(avg_group_size)
                 results['Num Groups'].append(num_groups)
 
-                print(f"\nSample groupings (hybrid_{config_name}, {prep_method} preprocessing, threshold={threshold}):")
-                print(result_df.head())
-                print(f"\nExecution time: {execution_time:.2f}s")
+                print(f"\nSample groupings:")
+                result_df.to_csv(save_path + f"/{config_name}_{prep_method}_{threshold}.csv", index=False)
+                print(f"Execution time: {execution_time:.2f}s")
                 print(f"Average group size: {avg_group_size:.2f}")
                 print(f"Number of unique groups: {num_groups}")
 
@@ -345,7 +276,7 @@ def compare_methods(df, thresholds=[0.85], preprocessing_methods=['basic', 'adva
 if __name__ == "__main__":
     # Sample data
     data = {
-        'Problem Description': [
+        'Short Description': [
             'System crash during startup',
             'System crashes on boot',
             'Network connection lost',
@@ -354,35 +285,28 @@ if __name__ == "__main__":
             'System crashes when booting up',
             'Network connectivity issues'
         ],
-        'Resolution Code': ['CR001', 'CR002', 'NT001', 'NT002', 'PR001', 'CR003', 'NT003']
+        'Resolution Type': ['CR001', 'CR002', 'NT001', 'NT002', 'PR001', 'CR003', 'NT003']
     }
     df = pd.DataFrame(data)
 
-    # Define hybrid configurations to test
     hybrid_configs = [
-        {'fuzzy': 0.3, 'transformer': 0.7},  # Fuzzy + Transformer
-        {'fuzzy': 0.2, 'tfidf': 0.3, 'transformer': 0.5},  # All three methods
-        {'tfidf': 0.4, 'transformer': 0.6}  # TF-IDF + Transformer
+        {'fuzzy': 0.3, 'transformer': 0.7},
+        # {'fuzzy': 0.2, 'tfidf': 0.3, 'transformer': 0.5},
+        # {'tfidf': 0.4, 'transformer': 0.6}
     ]
 
-    # Compare all methods including hybrid approaches
+    methods = [(conf.keys()) for conf in hybrid_configs]
+    methods = sorted(methods, key=lambda x: -len(x))[0]
+
+    # Run comparison with different methods and configurations
     comparison_results = compare_methods(
         df,
+        save_path="./tmp",
         thresholds=[0.90],
         preprocessing_methods=['basic', 'advanced'],
-        hybrid_configs=hybrid_configs
+        hybrid_configs=hybrid_configs,
+        methods=methods
     )
 
     print("\nMethod Comparison Summary:")
-    # Display full DataFrame without truncation
-    with pd.option_context('display.max_rows', None,
-                           'display.max_columns', None,
-                           'display.width', None,
-                           'display.max_colwidth', None,
-                           'display.expand_frame_repr', False,
-                           'display.precision', 3):
-        print(comparison_results)
-
-    # Save results to CSV for easier viewing if needed
-    comparison_results.to_csv('method_comparison_results.csv', index=False)
-    print("\nResults have been saved to 'method_comparison_results.csv'")
+    print(comparison_results)
