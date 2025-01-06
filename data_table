@@ -1,0 +1,121 @@
+
+from datetime import datetime
+import hashlib
+import sqlite3
+
+class DatabaseManager:
+    def __init__(self, db_path="users.db"):
+        self.db_path = db_path
+        self.init_database()
+
+    def add_column_safely(self, table_name, column_name, column_type):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}')
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+        finally:
+            conn.close()
+
+    def init_database(self):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                    (id INTEGER PRIMARY KEY,
+                     email TEXT UNIQUE NOT NULL,
+                     password_hash TEXT NOT NULL,
+                     security_question TEXT NOT NULL,
+                     security_answer_hash TEXT NOT NULL,
+                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        conn.commit()
+        conn.close()
+        self.add_column_safely('users', 'last_password_change', 'TIMESTAMP')
+
+    def create_user(self, email, password, security_question, security_answer):
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        answer_hash = hashlib.sha256(security_answer.lower().encode()).hexdigest()
+        current_time = datetime.now().isoformat()
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("""INSERT INTO users 
+                        (email, password_hash, security_question, security_answer_hash, last_password_change) 
+                        VALUES (?, ?, ?, ?, ?)""",
+                      (email, password_hash, security_question, answer_hash, current_time))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def verify_user(self, email, password):
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE email=? AND password_hash=?",
+                  (email, password_hash))
+        result = c.fetchone()
+        conn.close()
+        return result[0] if result else None
+
+    def verify_security_answer(self, email, answer):
+        answer_hash = hashlib.sha256(answer.lower().encode()).hexdigest()
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE email=? AND security_answer_hash=?",
+                  (email, answer_hash))
+        result = c.fetchone()
+        conn.close()
+        return result[0] if result else None
+
+    def get_security_question(self, email):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT security_question FROM users WHERE email=?", (email,))
+        result = c.fetchone()
+        conn.close()
+        return result[0] if result else None
+
+    def update_password(self, user_id, new_password):
+        password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        current_time = datetime.now().isoformat()
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("""UPDATE users 
+                    SET password_hash = ?, 
+                        last_password_change = ?
+                    WHERE id = ?""",
+                  (password_hash, current_time, user_id))
+        conn.commit()
+        conn.close()
+
+    def get_all_users(self):
+        """
+        Retrieves all users from the database.
+        Returns a list of dictionaries containing user information.
+        Each dictionary contains 'email' and 'hashed_password' fields.
+        """
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT email, password_hash FROM users")
+            users = c.fetchall()
+
+            # Convert to list of dictionaries format
+            users_list = [
+                {
+                    "email": user[0],
+                    "name": user[0].split('@')[0],  # Extract name from email
+                    "hashed_password": user[1]
+                }
+                for user in users
+            ]
+            return users_list
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return []
+        finally:
+            conn.close()
