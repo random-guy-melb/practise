@@ -2,13 +2,15 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import normalize
+from sklearn.model_selection import train_test_split
 import pickle
 import os
 import re
 
+
 class OneClassSVMTextDetector:
-    def __init__(self, 
-                 kernel='rbf', 
+    def __init__(self,
+                 kernel='rbf',
                  nu=0.1,
                  max_features=10000,
                  min_df=2,
@@ -16,7 +18,7 @@ class OneClassSVMTextDetector:
                  ngram_range=(1, 2)):
         """
         Initialize the detector with TF-IDF and One-Class SVM
-        
+
         Parameters:
         kernel: SVM kernel ('rbf', 'linear', 'poly')
         nu: SVM nu parameter (approximate proportion of outliers)
@@ -35,53 +37,182 @@ class OneClassSVMTextDetector:
             smooth_idf=True,
             sublinear_tf=True
         )
-        
+
         self.svm = OneClassSVM(
             kernel=kernel,
             nu=nu,
             gamma='scale'
         )
-        
+
         self.train_vectors = None
         self.train_sentences = None
-        
+
     def preprocess_text(self, text):
         """Clean and normalize text"""
         # Convert to lowercase
         text = text.lower()
-        
+
         # Remove special characters but keep structure
         text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
-        
+
         # Remove extra whitespace
         text = ' '.join(text.split())
-        
+
         return text
-        
+
+    def fit(self, sentences):
+        """Train the model with automatic validation split"""
+        # Split data into train and validation
+        train_sentences, val_sentences = train_test_split(
+            sentences, test_size=0.2, random_state=42
+        )
+
+        # Store training sentences
+        self.train_sentences = train_sentences
+
+        # Preprocess sentences
+        processed_sentences = [self.preprocess_text(s) for s in train_sentences]
+
+        # Fit and transform with TF-IDF
+        print("Fitting TF-IDF vectorizer...")
+        tfidf_vectors = self.tfidf.fit_transform(processed_sentences)
+
+        # Normalize vectors
+        print("Normalizing vectors...")
+        self.train_vectors = normalize(tfidf_vectors.toarray())
+
+        # Fit One-Class SVM
+        print("Training One-Class SVM...")
+        self.svm.fit(self.train_vectors)
+
+        # Validate the model
+        validation_results = self.validate_model(val_sentences)
+
+        # Print training and validation summary
+        self._print_training_summary(validation_results)
+
+        return self
+
+    def validate_model(self, val_sentences, anomaly_sentences=None):
+        """
+        Validate model performance and check for overfitting
+
+        Parameters:
+        val_sentences: List of normal sentences for validation
+        anomaly_sentences: Optional list of known anomaly sentences
+
+        Returns:
+        dict with validation metrics
+        """
+        metrics = {}
+
+        # Process validation data
+        val_processed = [self.preprocess_text(s) for s in val_sentences]
+        val_vectors = self.tfidf.transform(val_processed)
+        val_vectors_norm = normalize(val_vectors.toarray())
+
+        # Get scores
+        train_scores = self.svm.score_samples(self.train_vectors)
+        val_scores = self.svm.score_samples(val_vectors_norm)
+
+        # Calculate basic metrics
+        metrics['train_mean'] = np.mean(train_scores)
+        metrics['train_std'] = np.std(train_scores)
+        metrics['val_mean'] = np.mean(val_scores)
+        metrics['val_std'] = np.std(val_scores)
+
+        # Calculate score difference (key overfitting indicator)
+        metrics['score_diff'] = abs(metrics['train_mean'] - metrics['val_mean'])
+
+        # Check vocabulary stability
+        val_vectorizer = TfidfVectorizer(
+            max_features=self.tfidf.max_features,
+            min_df=self.tfidf.min_df,
+            max_df=self.tfidf.max_df
+        )
+        val_vectorizer.fit(val_processed)
+
+        train_vocab = set(self.tfidf.get_feature_names_out())
+        val_vocab = set(val_vectorizer.get_feature_names_out())
+        vocab_overlap = len(train_vocab.intersection(val_vocab)) / len(train_vocab)
+        metrics['vocab_stability'] = vocab_overlap
+
+        # If anomaly data provided, calculate separation
+        if anomaly_sentences is not None:
+            anomaly_processed = [self.preprocess_text(s) for s in anomaly_sentences]
+            anomaly_vectors = self.tfidf.transform(anomaly_processed)
+            anomaly_vectors_norm = normalize(anomaly_vectors.toarray())
+            anomaly_scores = self.svm.score_samples(anomaly_vectors_norm)
+
+            metrics['anomaly_mean'] = np.mean(anomaly_scores)
+            metrics['anomaly_std'] = np.std(anomaly_scores)
+            metrics['normal_anomaly_separation'] = metrics['val_mean'] - metrics['anomaly_mean']
+
+        # Overall assessment
+        metrics['assessment'] = self._assess_metrics(metrics)
+
+        return metrics
+
+    def _assess_metrics(self, metrics):
+        """Assess metrics and provide interpretation"""
+        concerns = []
+
+        # Check score difference
+        if metrics['score_diff'] > 0.5:
+            concerns.append(f"Large difference between training and validation scores: {metrics['score_diff']:.2f}")
+
+        # Check vocabulary stability
+        if metrics['vocab_stability'] < 0.5:
+            concerns.append(f"Low vocabulary overlap: {metrics['vocab_stability']:.2f}")
+
+        # Check score variance
+        if metrics['train_std'] < 0.01:
+            concerns.append("Very low variance in training scores (potential overfit)")
+
+        if 'normal_anomaly_separation' in metrics:
+            if metrics['normal_anomaly_separation'] < 0.3:
+                concerns.append("Poor separation between normal and anomaly scores")
+
+        if not concerns:
+            return "Model appears to be fitting well"
+        else:
+            return "Potential issues detected:\n- " + "\n- ".join(concerns)
+
+    def _print_training_summary(self, validation_results):
+        """Print training and validation summary"""
+        print("\nTraining Summary:")
+        print(f"Number of training documents: {len(self.train_sentences)}")
+        print(f"Vocabulary size: {len(self.tfidf.get_feature_names_out())}")
+        print("\nValidation Results:")
+        print(f"Score difference (train-val): {validation_results['score_diff']:.3f}")
+        print(f"Vocabulary stability: {validation_results['vocab_stability']:.3f}")
+        print("\nAssessment:")
+        print(validation_results['assessment'])
+
     def fit(self, sentences):
         """
         Fit the model on training sentences
-        
+
         Returns:
         self for method chaining
         """
         self.train_sentences = sentences
-        
+
         # Preprocess sentences
         processed_sentences = [self.preprocess_text(s) for s in sentences]
-        
+
         # Fit and transform with TF-IDF
         print("Fitting TF-IDF vectorizer...")
         tfidf_vectors = self.tfidf.fit_transform(processed_sentences)
-        
+
         # Normalize vectors
         print("Normalizing vectors...")
         self.train_vectors = normalize(tfidf_vectors.toarray())
-        
+
         # Fit One-Class SVM
         print("Training One-Class SVM...")
         self.svm.fit(self.train_vectors)
-        
+
         # Print training summary
         n_features = self.train_vectors.shape[1]
         print(f"\nTraining Summary:")
@@ -89,45 +220,73 @@ class OneClassSVMTextDetector:
         print(f"Vocabulary size: {n_features}")
         print(f"Top features by IDF weight:")
         self._print_top_features()
-        
+
         return self
-    
+
     def predict(self, sentences, return_score=False):
         """
         Predict if new sentences are normal (-1) or anomalous (1)
-        
+
         Parameters:
         sentences: List of sentences to predict
         return_score: If True, return decision scores as well
-        
+
         Returns:
         predictions or (predictions, scores) if return_score=True
         """
         # Preprocess new sentences
         processed_sentences = [self.preprocess_text(s) for s in sentences]
-        
+
         # Transform to TF-IDF vectors
         tfidf_vectors = self.tfidf.transform(processed_sentences)
         vectors = normalize(tfidf_vectors.toarray())
-        
+
         # Get predictions
         predictions = self.svm.predict(vectors)
-        
+
         if return_score:
             scores = self.svm.score_samples(vectors)
             return predictions, scores
-        
+
         return predictions
-    
+
+    def predict_single(self, sentence):
+        """
+        Predict if a single sentence is normal or anomalous
+
+        Parameters:
+        sentence: A single sentence to predict
+
+        Returns:
+        dict containing prediction, score, and processed text
+        """
+        # Process single sentence
+        processed_sentence = self.preprocess_text(sentence)
+
+        # Transform to TF-IDF vector
+        tfidf_vector = self.tfidf.transform([processed_sentence])
+        vector = normalize(tfidf_vector.toarray())
+
+        # Get prediction and score
+        prediction = self.svm.predict(vector)[0]
+        score = self.svm.score_samples(vector)[0]
+
+        return {
+            'sentence': sentence,
+            'processed': processed_sentence,
+            'prediction': 'Normal' if prediction == 1 else 'Anomaly',
+            'score': float(score)
+        }
+
     def _print_top_features(self, top_n=10):
         """Print top features by IDF weight"""
         vocab = self.tfidf.get_feature_names_out()
         idf_scores = dict(zip(vocab, self.tfidf.idf_))
         top_terms = sorted(idf_scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
-        
+
         for term, score in top_terms:
             print(f"{term}: {score:.4f}")
-    
+
     def save(self, path):
         """Save model to disk"""
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -138,19 +297,20 @@ class OneClassSVMTextDetector:
                 'train_vectors': self.train_vectors,
                 'train_sentences': self.train_sentences
             }, f)
-    
+
     @classmethod
     def load(cls, path):
         """Load model from disk"""
         with open(path, 'rb') as f:
             components = pickle.load(f)
-        
+
         model = cls()
         model.tfidf = components['tfidf']
         model.svm = components['svm']
         model.train_vectors = components['train_vectors']
         model.train_sentences = components['train_sentences']
         return model
+
 
 # Example usage
 def example():
@@ -162,28 +322,46 @@ def example():
         "Best practices for server setup",
         "Database configuration guide"
     ]
-    
+
     anomaly_sentences = [
         "Recipe for chocolate cake",
         "Best movies of 2024",
         "How to plant tomatoes",
     ]
-    
+
     # Initialize and train model
     detector = OneClassSVMTextDetector(nu=0.1)
     detector.fit(normal_sentences)
-    
-    # Make predictions
+
+    print("\nBatch Prediction Example:")
+    # Make batch predictions
     test_sentences = normal_sentences[:2] + anomaly_sentences[:2]
     predictions, scores = detector.predict(test_sentences, return_score=True)
-    
-    # Print results
-    print("\nPrediction Results:")
+
+    # Print batch results
     for sentence, pred, score in zip(test_sentences, predictions, scores):
         status = "Normal" if pred == 1 else "Anomaly"
         print(f"\nSentence: {sentence}")
         print(f"Prediction: {status}")
         print(f"Score: {score:.4f}")
 
-if __name__ == "__main__":
-    example()
+    print("\nSingle Prediction Example:")
+    # Test single predictions
+    test_sentence = "How to optimize database performance"
+    result = detector.predict_single(test_sentence)
+    print(f"\nInput: {result['sentence']}")
+    print(f"Processed: {result['processed']}")
+    print(f"Prediction: {result['prediction']}")
+    print(f"Score: {result['score']:.4f}")
+
+    # Interactive example
+    print("\nInteractive Example:")
+    print("Type 'quit' to exit")
+    while True:
+        sentence = input("\nEnter a sentence: ")
+        if sentence.lower() == 'quit':
+            break
+
+        result = detector.predict_single(sentence)
+        print(f"Prediction: {result['prediction']}")
+        print(f"Score: {result['score']:.4f}")
