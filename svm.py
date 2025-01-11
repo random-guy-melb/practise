@@ -1,15 +1,20 @@
-import numpy as np
+from gensim.models.doc2vec import Doc2Vec, TaggedDocument
+from sklearn.preprocessing import normalize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import OneClassSVM
-from sklearn.preprocessing import normalize
 from sklearn.model_selection import train_test_split
-import pickle
-import os
+import numpy as np
 import re
+import os
+import pickle
 
 
 class OneClassSVMTextDetector:
     def __init__(self,
+                 vectorizer_type='tfidf',  # Options: 'tfidf' or 'doc2vec'
+                 vector_size=100,  # For Doc2Vec
+                 min_count=2,  # For Doc2Vec
+                 epochs=20,  # For Doc2Vec
                  kernel='rbf',
                  nu=0.1,
                  max_features=10000,
@@ -17,26 +22,45 @@ class OneClassSVMTextDetector:
                  max_df=0.95,
                  ngram_range=(1, 2)):
         """
-        Initialize the detector with TF-IDF and One-Class SVM
+        Initialize the detector with choice of TF-IDF or Doc2Vec vectorization
 
         Parameters:
+        vectorizer_type: Type of vectorizer to use ('tfidf' or 'doc2vec')
+        vector_size: Size of document vectors for Doc2Vec
+        min_count: Minimum word count for Doc2Vec
+        epochs: Number of training epochs for Doc2Vec
         kernel: SVM kernel ('rbf', 'linear', 'poly')
         nu: SVM nu parameter (approximate proportion of outliers)
         max_features: Maximum number of features for TF-IDF
         min_df: Minimum document frequency for TF-IDF features
         max_df: Maximum document frequency for TF-IDF features
-        ngram_range: Range of n-grams to use
+        ngram_range: Range of n-grams to use for TF-IDF
         """
-        self.tfidf = TfidfVectorizer(
-            max_features=max_features,
-            min_df=min_df,
-            max_df=max_df,
-            ngram_range=ngram_range,
-            norm='l2',
-            use_idf=True,
-            smooth_idf=True,
-            sublinear_tf=True
-        )
+        self.vectorizer_type = vectorizer_type
+
+        # Initialize TF-IDF vectorizer
+        if vectorizer_type == 'tfidf':
+            self.vectorizer = TfidfVectorizer(
+                max_features=max_features,
+                min_df=min_df,
+                max_df=max_df,
+                ngram_range=ngram_range,
+                norm='l2',
+                use_idf=True,
+                smooth_idf=True,
+                sublinear_tf=True
+            )
+        # Initialize Doc2Vec model
+        elif vectorizer_type == 'doc2vec':
+            self.vectorizer = Doc2Vec(
+                vector_size=vector_size,
+                min_count=min_count,
+                epochs=epochs,
+                dm=1,  # Use PV-DM
+                workers=4
+            )
+        else:
+            raise ValueError("vectorizer_type must be either 'tfidf' or 'doc2vec'")
 
         self.svm = OneClassSVM(
             kernel=kernel,
@@ -46,6 +70,7 @@ class OneClassSVMTextDetector:
 
         self.train_vectors = None
         self.train_sentences = None
+        self.vector_size = vector_size  # For Doc2Vec
 
     def preprocess_text(self, text):
         """Clean and normalize text"""
@@ -60,6 +85,38 @@ class OneClassSVMTextDetector:
 
         return text
 
+    def _vectorize_text(self, sentences, training=False):
+        """Vectorize text using either TF-IDF or Doc2Vec"""
+        processed_sentences = [self.preprocess_text(s) for s in sentences]
+
+        if self.vectorizer_type == 'tfidf':
+            if training:
+                vectors = self.vectorizer.fit_transform(processed_sentences)
+            else:
+                vectors = self.vectorizer.transform(processed_sentences)
+            return normalize(vectors.toarray())
+
+        elif self.vectorizer_type == 'doc2vec':
+            if training:
+                # Prepare tagged documents for Doc2Vec
+                tagged_data = [TaggedDocument(words=doc.split(), tags=[i])
+                               for i, doc in enumerate(processed_sentences)]
+                # Train Doc2Vec model
+                self.vectorizer.build_vocab(tagged_data)
+                self.vectorizer.train(
+                    tagged_data,
+                    total_examples=self.vectorizer.corpus_count,
+                    epochs=self.vectorizer.epochs
+                )
+                # Get document vectors
+                vectors = np.array([self.vectorizer.dv[i]
+                                    for i in range(len(processed_sentences))])
+            else:
+                # Infer vectors for new documents
+                vectors = np.array([self.vectorizer.infer_vector(doc.split())
+                                    for doc in processed_sentences])
+            return normalize(vectors)
+
     def fit(self, sentences):
         """Train the model with automatic validation split"""
         # Split data into train and validation
@@ -70,16 +127,9 @@ class OneClassSVMTextDetector:
         # Store training sentences
         self.train_sentences = train_sentences
 
-        # Preprocess sentences
-        processed_sentences = [self.preprocess_text(s) for s in train_sentences]
-
-        # Fit and transform with TF-IDF
-        print("Fitting TF-IDF vectorizer...")
-        tfidf_vectors = self.tfidf.fit_transform(processed_sentences)
-
-        # Normalize vectors
-        print("Normalizing vectors...")
-        self.train_vectors = normalize(tfidf_vectors.toarray())
+        # Vectorize training data
+        print(f"Fitting {self.vectorizer_type.upper()} vectorizer...")
+        self.train_vectors = self._vectorize_text(train_sentences, training=True)
 
         # Fit One-Class SVM
         print("Training One-Class SVM...")
@@ -94,55 +144,41 @@ class OneClassSVMTextDetector:
         return self
 
     def validate_model(self, val_sentences, anomaly_sentences=None):
-        """
-        Validate model performance and check for overfitting
-
-        Parameters:
-        val_sentences: List of normal sentences for validation
-        anomaly_sentences: Optional list of known anomaly sentences
-
-        Returns:
-        dict with validation metrics
-        """
+        """Validate model performance"""
         metrics = {}
 
-        # Process validation data
-        val_processed = [self.preprocess_text(s) for s in val_sentences]
-        val_vectors = self.tfidf.transform(val_processed)
-        val_vectors_norm = normalize(val_vectors.toarray())
+        # Get vectors for validation data
+        val_vectors = self._vectorize_text(val_sentences)
 
         # Get scores
         train_scores = self.svm.score_samples(self.train_vectors)
-        val_scores = self.svm.score_samples(val_vectors_norm)
+        val_scores = self.svm.score_samples(val_vectors)
 
         # Calculate basic metrics
         metrics['train_mean'] = np.mean(train_scores)
         metrics['train_std'] = np.std(train_scores)
         metrics['val_mean'] = np.mean(val_scores)
         metrics['val_std'] = np.std(val_scores)
-
-        # Calculate score difference (key overfitting indicator)
         metrics['score_diff'] = abs(metrics['train_mean'] - metrics['val_mean'])
 
-        # Check vocabulary stability
-        val_vectorizer = TfidfVectorizer(
-            max_features=self.tfidf.max_features,
-            min_df=self.tfidf.min_df,
-            max_df=self.tfidf.max_df
-        )
-        val_vectorizer.fit(val_processed)
+        # For TF-IDF, check vocabulary stability
+        if self.vectorizer_type == 'tfidf':
+            val_vectorizer = TfidfVectorizer(
+                max_features=self.vectorizer.max_features,
+                min_df=self.vectorizer.min_df,
+                max_df=self.vectorizer.max_df
+            )
+            val_vectorizer.fit([self.preprocess_text(s) for s in val_sentences])
 
-        train_vocab = set(self.tfidf.get_feature_names_out())
-        val_vocab = set(val_vectorizer.get_feature_names_out())
-        vocab_overlap = len(train_vocab.intersection(val_vocab)) / len(train_vocab)
-        metrics['vocab_stability'] = vocab_overlap
+            train_vocab = set(self.vectorizer.get_feature_names_out())
+            val_vocab = set(val_vectorizer.get_feature_names_out())
+            vocab_overlap = len(train_vocab.intersection(val_vocab)) / len(train_vocab)
+            metrics['vocab_stability'] = vocab_overlap
 
         # If anomaly data provided, calculate separation
         if anomaly_sentences is not None:
-            anomaly_processed = [self.preprocess_text(s) for s in anomaly_sentences]
-            anomaly_vectors = self.tfidf.transform(anomaly_processed)
-            anomaly_vectors_norm = normalize(anomaly_vectors.toarray())
-            anomaly_scores = self.svm.score_samples(anomaly_vectors_norm)
+            anomaly_vectors = self._vectorize_text(anomaly_sentences)
+            anomaly_scores = self.svm.score_samples(anomaly_vectors)
 
             metrics['anomaly_mean'] = np.mean(anomaly_scores)
             metrics['anomaly_std'] = np.std(anomaly_scores)
@@ -153,93 +189,10 @@ class OneClassSVMTextDetector:
 
         return metrics
 
-    def _assess_metrics(self, metrics):
-        """Assess metrics and provide interpretation"""
-        concerns = []
-
-        # Check score difference
-        if metrics['score_diff'] > 0.5:
-            concerns.append(f"Large difference between training and validation scores: {metrics['score_diff']:.2f}")
-
-        # Check vocabulary stability
-        if metrics['vocab_stability'] < 0.5:
-            concerns.append(f"Low vocabulary overlap: {metrics['vocab_stability']:.2f}")
-
-        # Check score variance
-        if metrics['train_std'] < 0.01:
-            concerns.append("Very low variance in training scores (potential overfit)")
-
-        if 'normal_anomaly_separation' in metrics:
-            if metrics['normal_anomaly_separation'] < 0.3:
-                concerns.append("Poor separation between normal and anomaly scores")
-
-        if not concerns:
-            return "Model appears to be fitting well"
-        else:
-            return "Potential issues detected:\n- " + "\n- ".join(concerns)
-
-    def _print_training_summary(self, validation_results):
-        """Print training and validation summary"""
-        print("\nTraining Summary:")
-        print(f"Number of training documents: {len(self.train_sentences)}")
-        print(f"Vocabulary size: {len(self.tfidf.get_feature_names_out())}")
-        print("\nValidation Results:")
-        print(f"Score difference (train-val): {validation_results['score_diff']:.3f}")
-        print(f"Vocabulary stability: {validation_results['vocab_stability']:.3f}")
-        print("\nAssessment:")
-        print(validation_results['assessment'])
-
-    def fit(self, sentences):
-        """
-        Fit the model on training sentences
-
-        Returns:
-        self for method chaining
-        """
-        self.train_sentences = sentences
-
-        # Preprocess sentences
-        processed_sentences = [self.preprocess_text(s) for s in sentences]
-
-        # Fit and transform with TF-IDF
-        print("Fitting TF-IDF vectorizer...")
-        tfidf_vectors = self.tfidf.fit_transform(processed_sentences)
-
-        # Normalize vectors
-        print("Normalizing vectors...")
-        self.train_vectors = normalize(tfidf_vectors.toarray())
-
-        # Fit One-Class SVM
-        print("Training One-Class SVM...")
-        self.svm.fit(self.train_vectors)
-
-        # Print training summary
-        n_features = self.train_vectors.shape[1]
-        print(f"\nTraining Summary:")
-        print(f"Number of training documents: {len(sentences)}")
-        print(f"Vocabulary size: {n_features}")
-        print(f"Top features by IDF weight:")
-        self._print_top_features()
-
-        return self
-
     def predict(self, sentences, return_score=False):
-        """
-        Predict if new sentences are normal (-1) or anomalous (1)
-
-        Parameters:
-        sentences: List of sentences to predict
-        return_score: If True, return decision scores as well
-
-        Returns:
-        predictions or (predictions, scores) if return_score=True
-        """
-        # Preprocess new sentences
-        processed_sentences = [self.preprocess_text(s) for s in sentences]
-
-        # Transform to TF-IDF vectors
-        tfidf_vectors = self.tfidf.transform(processed_sentences)
-        vectors = normalize(tfidf_vectors.toarray())
+        """Predict if new sentences are normal (-1) or anomalous (1)"""
+        # Get vectors for new sentences
+        vectors = self._vectorize_text(sentences)
 
         # Get predictions
         predictions = self.svm.predict(vectors)
@@ -251,48 +204,28 @@ class OneClassSVMTextDetector:
         return predictions
 
     def predict_single(self, sentence):
-        """
-        Predict if a single sentence is normal or anomalous
-
-        Parameters:
-        sentence: A single sentence to predict
-
-        Returns:
-        dict containing prediction, score, and processed text
-        """
-        # Process single sentence
-        processed_sentence = self.preprocess_text(sentence)
-
-        # Transform to TF-IDF vector
-        tfidf_vector = self.tfidf.transform([processed_sentence])
-        vector = normalize(tfidf_vector.toarray())
+        """Predict if a single sentence is normal or anomalous"""
+        # Process and vectorize single sentence
+        vectors = self._vectorize_text([sentence])
 
         # Get prediction and score
-        prediction = self.svm.predict(vector)[0]
-        score = self.svm.score_samples(vector)[0]
+        prediction = self.svm.predict(vectors)[0]
+        score = self.svm.score_samples(vectors)[0]
 
         return {
             'sentence': sentence,
-            'processed': processed_sentence,
+            'processed': self.preprocess_text(sentence),
             'prediction': 'Normal' if prediction == 1 else 'Anomaly',
             'score': float(score)
         }
-
-    def _print_top_features(self, top_n=10):
-        """Print top features by IDF weight"""
-        vocab = self.tfidf.get_feature_names_out()
-        idf_scores = dict(zip(vocab, self.tfidf.idf_))
-        top_terms = sorted(idf_scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
-
-        for term, score in top_terms:
-            print(f"{term}: {score:.4f}")
 
     def save(self, path):
         """Save model to disk"""
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'wb') as f:
             pickle.dump({
-                'tfidf': self.tfidf,
+                'vectorizer_type': self.vectorizer_type,
+                'vectorizer': self.vectorizer,
                 'svm': self.svm,
                 'train_vectors': self.train_vectors,
                 'train_sentences': self.train_sentences
@@ -304,8 +237,8 @@ class OneClassSVMTextDetector:
         with open(path, 'rb') as f:
             components = pickle.load(f)
 
-        model = cls()
-        model.tfidf = components['tfidf']
+        model = cls(vectorizer_type=components['vectorizer_type'])
+        model.vectorizer = components['vectorizer']
         model.svm = components['svm']
         model.train_vectors = components['train_vectors']
         model.train_sentences = components['train_sentences']
@@ -329,39 +262,27 @@ def example():
         "How to plant tomatoes",
     ]
 
-    # Initialize and train model
-    detector = OneClassSVMTextDetector(nu=0.1)
-    detector.fit(normal_sentences)
+    # Test with TF-IDF
+    print("\nTesting with TF-IDF vectorization:")
+    detector_tfidf = OneClassSVMTextDetector(vectorizer_type='tfidf', nu=0.1)
+    detector_tfidf.fit(normal_sentences)
 
-    print("\nBatch Prediction Example:")
-    # Make batch predictions
-    test_sentences = normal_sentences[:2] + anomaly_sentences[:2]
-    predictions, scores = detector.predict(test_sentences, return_score=True)
+    # Test with Doc2Vec
+    print("\nTesting with Doc2Vec vectorization:")
+    detector_doc2vec = OneClassSVMTextDetector(vectorizer_type='doc2vec', nu=0.1)
+    detector_doc2vec.fit(normal_sentences)
 
-    # Print batch results
-    for sentence, pred, score in zip(test_sentences, predictions, scores):
-        status = "Normal" if pred == 1 else "Anomaly"
-        print(f"\nSentence: {sentence}")
-        print(f"Prediction: {status}")
-        print(f"Score: {score:.4f}")
-
-    print("\nSingle Prediction Example:")
-    # Test single predictions
+    # Compare results
     test_sentence = "How to optimize database performance"
-    result = detector.predict_single(test_sentence)
-    print(f"\nInput: {result['sentence']}")
-    print(f"Processed: {result['processed']}")
-    print(f"Prediction: {result['prediction']}")
-    print(f"Score: {result['score']:.4f}")
 
-    # Interactive example
-    print("\nInteractive Example:")
-    print("Type 'quit' to exit")
-    while True:
-        sentence = input("\nEnter a sentence: ")
-        if sentence.lower() == 'quit':
-            break
+    print("\nComparing results for:", test_sentence)
+    result_tfidf = detector_tfidf.predict_single(test_sentence)
+    result_doc2vec = detector_doc2vec.predict_single(test_sentence)
 
-        result = detector.predict_single(sentence)
-        print(f"Prediction: {result['prediction']}")
-        print(f"Score: {result['score']:.4f}")
+    print("\nTF-IDF Results:")
+    print(f"Prediction: {result_tfidf['prediction']}")
+    print(f"Score: {result_tfidf['score']:.4f}")
+
+    print("\nDoc2Vec Results:")
+    print(f"Prediction: {result_doc2vec['prediction']}")
+    print(f"Score: {result_doc2vec['score']:.4f}")
