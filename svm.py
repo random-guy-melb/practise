@@ -1,288 +1,261 @@
-from gensim.models.doc2vec import Doc2Vec, TaggedDocument
-from sklearn.preprocessing import normalize
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import OneClassSVM
-from sklearn.model_selection import train_test_split
+import spacy
+import networkx as nx
 import numpy as np
+from sentence_transformers import SentenceTransformer
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
 import re
-import os
-import pickle
+from typing import Dict, List, Tuple
 
-
-class OneClassSVMTextDetector:
-    def __init__(self,
-                 vectorizer_type='tfidf',  # Options: 'tfidf' or 'doc2vec'
-                 vector_size=100,  # For Doc2Vec
-                 min_count=2,  # For Doc2Vec
-                 epochs=20,  # For Doc2Vec
-                 kernel='rbf',
-                 nu=0.1,
-                 max_features=10000,
-                 min_df=2,
-                 max_df=0.95,
-                 ngram_range=(1, 2)):
-        """
-        Initialize the detector with choice of TF-IDF or Doc2Vec vectorization
-
-        Parameters:
-        vectorizer_type: Type of vectorizer to use ('tfidf' or 'doc2vec')
-        vector_size: Size of document vectors for Doc2Vec
-        min_count: Minimum word count for Doc2Vec
-        epochs: Number of training epochs for Doc2Vec
-        kernel: SVM kernel ('rbf', 'linear', 'poly')
-        nu: SVM nu parameter (approximate proportion of outliers)
-        max_features: Maximum number of features for TF-IDF
-        min_df: Minimum document frequency for TF-IDF features
-        max_df: Maximum document frequency for TF-IDF features
-        ngram_range: Range of n-grams to use for TF-IDF
-        """
-        self.vectorizer_type = vectorizer_type
-
-        # Initialize TF-IDF vectorizer
-        if vectorizer_type == 'tfidf':
-            self.vectorizer = TfidfVectorizer(
-                max_features=max_features,
-                min_df=min_df,
-                max_df=max_df,
-                ngram_range=ngram_range,
-                norm='l2',
-                use_idf=True,
-                smooth_idf=True,
-                sublinear_tf=True
-            )
-        # Initialize Doc2Vec model
-        elif vectorizer_type == 'doc2vec':
-            self.vectorizer = Doc2Vec(
-                vector_size=vector_size,
-                min_count=min_count,
-                epochs=epochs,
-                dm=1,  # Use PV-DM
-                workers=4
-            )
-        else:
-            raise ValueError("vectorizer_type must be either 'tfidf' or 'doc2vec'")
-
-        self.svm = OneClassSVM(
-            kernel=kernel,
-            nu=nu,
-            gamma='scale'
-        )
-
-        self.train_vectors = None
-        self.train_sentences = None
-        self.vector_size = vector_size  # For Doc2Vec
-
-    def preprocess_text(self, text):
-        """Clean and normalize text"""
-        # Convert to lowercase
-        text = text.lower()
-
-        # Remove special characters but keep structure
-        text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
-
-        # Remove extra whitespace
-        text = ' '.join(text.split())
-
-        return text
-
-    def _vectorize_text(self, sentences, training=False):
-        """Vectorize text using either TF-IDF or Doc2Vec"""
-        processed_sentences = [self.preprocess_text(s) for s in sentences]
-
-        if self.vectorizer_type == 'tfidf':
-            if training:
-                vectors = self.vectorizer.fit_transform(processed_sentences)
-            else:
-                vectors = self.vectorizer.transform(processed_sentences)
-            return normalize(vectors.toarray())
-
-        elif self.vectorizer_type == 'doc2vec':
-            if training:
-                # Prepare tagged documents for Doc2Vec
-                tagged_data = [TaggedDocument(words=doc.split(), tags=[i])
-                               for i, doc in enumerate(processed_sentences)]
-                # Train Doc2Vec model
-                self.vectorizer.build_vocab(tagged_data)
-                self.vectorizer.train(
-                    tagged_data,
-                    total_examples=self.vectorizer.corpus_count,
-                    epochs=self.vectorizer.epochs
-                )
-                # Get document vectors
-                vectors = np.array([self.vectorizer.dv[i]
-                                    for i in range(len(processed_sentences))])
-            else:
-                # Infer vectors for new documents
-                vectors = np.array([self.vectorizer.infer_vector(doc.split())
-                                    for doc in processed_sentences])
-            return normalize(vectors)
-
-    def fit(self, sentences):
-        """Train the model with automatic validation split"""
-        # Split data into train and validation
-        train_sentences, val_sentences = train_test_split(
-            sentences, test_size=0.2, random_state=42
-        )
-
-        # Store training sentences
-        self.train_sentences = train_sentences
-
-        # Vectorize training data
-        print(f"Fitting {self.vectorizer_type.upper()} vectorizer...")
-        self.train_vectors = self._vectorize_text(train_sentences, training=True)
-
-        # Fit One-Class SVM
-        print("Training One-Class SVM...")
-        self.svm.fit(self.train_vectors)
-
-        # Validate the model
-        validation_results = self.validate_model(val_sentences)
-
-        # Print training and validation summary
-        self._print_training_summary(validation_results)
-
-        return self
-
-    def validate_model(self, val_sentences, anomaly_sentences=None):
-        """Validate model performance"""
-        metrics = {}
-
-        # Get vectors for validation data
-        val_vectors = self._vectorize_text(val_sentences)
-
-        # Get scores
-        train_scores = self.svm.score_samples(self.train_vectors)
-        val_scores = self.svm.score_samples(val_vectors)
-
-        # Calculate basic metrics
-        metrics['train_mean'] = np.mean(train_scores)
-        metrics['train_std'] = np.std(train_scores)
-        metrics['val_mean'] = np.mean(val_scores)
-        metrics['val_std'] = np.std(val_scores)
-        metrics['score_diff'] = abs(metrics['train_mean'] - metrics['val_mean'])
-
-        # For TF-IDF, check vocabulary stability
-        if self.vectorizer_type == 'tfidf':
-            val_vectorizer = TfidfVectorizer(
-                max_features=self.vectorizer.max_features,
-                min_df=self.vectorizer.min_df,
-                max_df=self.vectorizer.max_df
-            )
-            val_vectorizer.fit([self.preprocess_text(s) for s in val_sentences])
-
-            train_vocab = set(self.vectorizer.get_feature_names_out())
-            val_vocab = set(val_vectorizer.get_feature_names_out())
-            vocab_overlap = len(train_vocab.intersection(val_vocab)) / len(train_vocab)
-            metrics['vocab_stability'] = vocab_overlap
-
-        # If anomaly data provided, calculate separation
-        if anomaly_sentences is not None:
-            anomaly_vectors = self._vectorize_text(anomaly_sentences)
-            anomaly_scores = self.svm.score_samples(anomaly_vectors)
-
-            metrics['anomaly_mean'] = np.mean(anomaly_scores)
-            metrics['anomaly_std'] = np.std(anomaly_scores)
-            metrics['normal_anomaly_separation'] = metrics['val_mean'] - metrics['anomaly_mean']
-
-        # Overall assessment
-        metrics['assessment'] = self._assess_metrics(metrics)
-
-        return metrics
-
-    def predict(self, sentences, return_score=False):
-        """Predict if new sentences are normal (-1) or anomalous (1)"""
-        # Get vectors for new sentences
-        vectors = self._vectorize_text(sentences)
-
-        # Get predictions
-        predictions = self.svm.predict(vectors)
-
-        if return_score:
-            scores = self.svm.score_samples(vectors)
-            return predictions, scores
-
-        return predictions
-
-    def predict_single(self, sentence):
-        """Predict if a single sentence is normal or anomalous"""
-        # Process and vectorize single sentence
-        vectors = self._vectorize_text([sentence])
-
-        # Get prediction and score
-        prediction = self.svm.predict(vectors)[0]
-        score = self.svm.score_samples(vectors)[0]
-
-        return {
-            'sentence': sentence,
-            'processed': self.preprocess_text(sentence),
-            'prediction': 'Normal' if prediction == 1 else 'Anomaly',
-            'score': float(score)
+class DependencyGraphClassifier:
+    def __init__(self):
+        # Load SpaCy model for dependency parsing
+        self.nlp = spacy.load('en_core_web_sm')
+        
+        # Load sentence transformer for semantic embeddings
+        self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Initialize one-class SVM for outlier detection
+        self.svm = OneClassSVM(kernel='rbf', nu=0.1)
+        self.scaler = StandardScaler()
+        
+        # Initialize patterns dictionary for IT-specific entity recognition
+        sself.patterns = {
+            'DEVICE_ID': [
+                (r'ACO\s*\d+(?:,\d+)?', 'ACO ID'),
+                (r'LANE\s*\d+(?:\s*,\s*\d+)*', 'Lane ID'),
+                (r'(?:LANE|2LS)\s*\d+', 'Lane ID'),
+                (r'S[VSOW]\d+SC\d+', 'Scale ID'),
+                (r'SQ\d+(?:BP|NW|IS)\d+', 'Workstation ID'),  # Added NW/IS variants
+                (r'SN\d+NW\d+', 'Network Device ID')
+            ],
+            'LOCATION': [
+                (r'CS\d+(?:Co)?', 'Store Code'),
+                (r'CS\d+\s+[A-Za-z\s]+', 'Store Location'),  # e.g., CS4786 Wanniassa
+                (r'\d+\s+[A-Za-z\s]+(?:Mall|City)', 'Store Location'),
+                (r'[A-Za-z]+\s+City', 'City')
+            ],
+            'NETWORK': [
+                (r'(?:IP address|IP):\s*(?:\d{1,3}\.){3}\d{1,3}', 'IP Address'),
+                (r'(?:\d{1,3}\.){3}\d{1,3}', 'IP Address'),
+                (r'Suspicious traffic', 'Security Alert'),
+                (r'Offline', 'Network Status')
+            ],
+            'SYSTEM': [
+                (r'SMKTS\s+BOS\s+Workstation', 'BOS System'),
+                (r'Supply\s+Chain', 'Supply Chain'),
+                (r'WMS', 'Warehouse System'),
+                (r'EFT\s+Operator', 'Payment System'),
+                (r'BOS', 'BOS System')
+            ],
+            'DEPARTMENT': [
+                (r'Bakery', 'Department'),
+                (r'Deli', 'Department'),
+                (r'Supermarket', 'Department'),
+                (r'COL', 'Department')
+            ],
+            'ERROR_TYPE': [
+                (r'unhandled\s+exception', 'System Error'),
+                (r'Missing\s+ANS\s+number', 'Data Error'),
+                (r'Power\s+outage', 'Power Issue'),
+                (r'Payments\s+not\s+going\s+through', 'Payment Error'),
+                (r'payment\s+cannot\s+be\s+processed', 'Payment Error'),
+                (r'Order\s+payment', 'Payment Process')
+            ],
+            'STATUS': [
+                (r'\[.*?\]', 'Status Tag'),
+                (r'(?:Not Trading|Trading|Non-Operational)', 'Operational Status'),
+                (r'offline', 'Network Status')
+            ]
+            'LOCATION': [
+                (r'CE\d+', 'Store Code'),
+                (r'\d+\s+\w+\s+(?:Mall|South|North|East|West)', 'Store Location')
+            ],
+            'ERROR_CODE': [
+                (r'\b\d{4,6}\b(?!\s*(?:Mall|South|North|East|West))', 'Numeric Code')
+            ],
+            'STATUS': [
+                (r'\[.*?\]', 'Status Tag'),
+                (r'(?:Not Trading|Trading|Non-Operational)', 'Operational Status')
+            ],
+            'EQUIPMENT': [
+                (r'(?:Scale|Printer|UPS|POS|Software|Camera)', 'Equipment Type'),
+                (r'(?:Bakery\s+Scale|bakery\s+scale)', 'Bakery Scale')
+            ],
+            'DEPARTMENT': [
+                (r'Bakery', 'Department'),
+                (r'Deli', 'Department')
+            ],
+            'ISSUE_TYPE': [
+                (r'non\s*operational', 'Operational Status'),
+                (r'cannot\s+read', 'Error Type'),
+                (r'piece\s+of\s+plastic\s+cam\s+off', 'Physical Issue'),
+                (r'printer\s+says', 'Printer Issue')
+            ]
         }
 
-    def save(self, path):
-        """Save model to disk"""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'wb') as f:
-            pickle.dump({
-                'vectorizer_type': self.vectorizer_type,
-                'vectorizer': self.vectorizer,
-                'svm': self.svm,
-                'train_vectors': self.train_vectors,
-                'train_sentences': self.train_sentences
-            }, f)
+    def extract_graph_features(self, doc) -> np.ndarray:
+        """Extract features from dependency parse graph"""
+        # Create dependency graph
+        edges = []
+        edge_types = []
+        for token in doc:
+            edges.append((token.i, token.head.i))
+            edge_types.append(token.dep_)
 
-    @classmethod
-    def load(cls, path):
-        """Load model from disk"""
-        with open(path, 'rb') as f:
-            components = pickle.load(f)
+        G = nx.Graph(edges)
+        
+        # Extract graph-theoretical features
+        graph_features = []
+        
+        # Basic graph metrics
+        try:
+            graph_features.extend([
+                nx.average_clustering(G),
+                nx.degree_pearson_correlation_coefficient(G),
+                len(list(nx.connected_components(G))),
+                nx.average_shortest_path_length(G) if nx.is_connected(G) else 0,
+                G.number_of_edges() / G.number_of_nodes(),  # Edge density
+                len(set(edge_types))  # Unique dependency types
+            ])
+        except:
+            # Fallback values if graph metrics calculation fails
+            graph_features.extend([0, 0, 1, 0, 0, 0])
 
-        model = cls(vectorizer_type=components['vectorizer_type'])
-        model.vectorizer = components['vectorizer']
-        model.svm = components['svm']
-        model.train_vectors = components['train_vectors']
-        model.train_sentences = components['train_sentences']
-        return model
+        # Dependency-specific features
+        dep_counts = {}
+        for dep in edge_types:
+            dep_counts[dep] = dep_counts.get(dep, 0) + 1
+        
+        # Common dependency types in error messages
+        key_deps = ['nsubj', 'dobj', 'prep', 'compound', 'amod']
+        for dep in key_deps:
+            graph_features.append(dep_counts.get(dep, 0))
 
+        return np.array(graph_features)
 
-# Example usage
-def example():
-    # Generate some example data
-    normal_sentences = [
-        "How to install a database",
-        "Tutorial on configuring servers",
-        "Guide for optimizing network",
-        "Best practices for server setup",
-        "Database configuration guide"
+    def extract_pattern_features(self, text: str) -> np.ndarray:
+        """Extract features based on IT-specific patterns"""
+        pattern_features = []
+        
+        for category, patterns in self.patterns.items():
+            category_matches = 0
+            for pattern, _ in patterns:
+                if re.search(pattern, text, re.IGNORECASE):
+                    category_matches += 1
+            pattern_features.append(category_matches)
+            
+        return np.array(pattern_features)
+
+    def extract_features(self, text: str) -> np.ndarray:
+        # Parse text using SpaCy
+        doc = self.nlp(text)
+        
+        # Get graph features from dependency parse
+        graph_features = self.extract_graph_features(doc)
+        
+        # Get pattern-based features
+        pattern_features = self.extract_pattern_features(text)
+        
+        # Get semantic embeddings
+        semantic_features = self.sentence_transformer.encode(text)
+        
+        # Additional structural features
+        structural_features = np.array([
+            len(text),  # Text length
+            len(doc),   # Token count
+            len([token for token in doc if token.is_punct]),  # Punctuation count
+            len([token for token in doc if token.like_num]),  # Number count
+            len([token for token in doc if token.is_upper]),  # Uppercase token count
+            len([token for token in doc if token.pos_ == 'VERB']),  # Verb count
+            len([token for token in doc if token.pos_ == 'NOUN'])   # Noun count
+        ])
+        
+        # Combine all features
+        return np.concatenate([
+            graph_features,
+            pattern_features,
+            semantic_features,
+            structural_features
+        ])
+
+    def fit(self, texts: List[str]) -> None:
+        """Train the classifier on normal examples"""
+        # Extract features for all texts
+        features = np.vstack([self.extract_features(text) for text in texts])
+        
+        # Scale features
+        features_scaled = self.scaler.fit_transform(features)
+        
+        # Fit one-class SVM
+        self.svm.fit(features_scaled)
+
+    def predict(self, text: str) -> int:
+        """Predict if a text is an outlier (-1) or normal (1)"""
+        features = self.extract_features(text)
+        features_scaled = self.scaler.transform(features.reshape(1, -1))
+        return self.svm.predict(features_scaled)[0]
+
+    def analyze_structure(self, text: str) -> Dict:
+        """Analyze the syntactic structure of the text"""
+        doc = self.nlp(text)
+        
+        analysis = {
+            'dependency_structure': [],
+            'key_phrases': [],
+            'entities': []
+        }
+        
+        # Extract dependency relationships
+        for token in doc:
+            if token.dep_ != 'punct':
+                analysis['dependency_structure'].append({
+                    'token': token.text,
+                    'dependency': token.dep_,
+                    'head': token.head.text
+                })
+        
+        # Extract key phrases (noun phrases and verb phrases)
+        for chunk in doc.noun_chunks:
+            analysis['key_phrases'].append({
+                'text': chunk.text,
+                'type': 'noun_phrase'
+            })
+        
+        # Extract IT-specific entities
+        for category, patterns in self.patterns.items():
+            for pattern, label in patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    analysis['entities'].append({
+                        'text': match.group(),
+                        'type': label,
+                        'category': category
+                    })
+        
+        return analysis
+
+if __name__ == "__main__":
+    # Initialize classifier
+    classifier = DependencyGraphClassifier()
+    
+    # Training data
+    normal_incidents = [
+        "ACO130,132 - SMKTS ACO Software Stuck on Error Message - "Unhandled Exception has Occurred" - [Not Trading ]",
+        "LANE123 â€" Cash Management â€" not registering cash declaration â€" [ Not Trading ]",
+        "Bakery Scale- SV7501SC401- not printing correctly - [non-operational]"
     ]
-
-    anomaly_sentences = [
-        "Recipe for chocolate cake",
-        "Best movies of 2024",
-        "How to plant tomatoes",
-    ]
-
-    # Test with TF-IDF
-    print("\nTesting with TF-IDF vectorization:")
-    detector_tfidf = OneClassSVMTextDetector(vectorizer_type='tfidf', nu=0.1)
-    detector_tfidf.fit(normal_sentences)
-
-    # Test with Doc2Vec
-    print("\nTesting with Doc2Vec vectorization:")
-    detector_doc2vec = OneClassSVMTextDetector(vectorizer_type='doc2vec', nu=0.1)
-    detector_doc2vec.fit(normal_sentences)
-
-    # Compare results
-    test_sentence = "How to optimize database performance"
-
-    print("\nComparing results for:", test_sentence)
-    result_tfidf = detector_tfidf.predict_single(test_sentence)
-    result_doc2vec = detector_doc2vec.predict_single(test_sentence)
-
-    print("\nTF-IDF Results:")
-    print(f"Prediction: {result_tfidf['prediction']}")
-    print(f"Score: {result_tfidf['score']:.4f}")
-
-    print("\nDoc2Vec Results:")
-    print(f"Prediction: {result_doc2vec['prediction']}")
-    print(f"Score: {result_doc2vec['score']:.4f}")
+    
+    # Train the classifier
+    classifier.fit(normal_incidents)
+    
+    # Test new incident
+    new_incident = "LANE114 - Software - "Stuck on Enter ID screen" - [Not Trading ]"
+    result = classifier.predict(new_incident)
+    
+    # Analyze structure
+    analysis = classifier.analyze_structure(new_incident)
+    
+    print("Prediction (1=normal, -1=outlier):", result)
+    print("\nStructural Analysis:")
+    print(analysis)
