@@ -5,22 +5,23 @@ from sentence_transformers import SentenceTransformer
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List
+
 
 class DependencyGraphClassifier:
     def __init__(self):
         # Load SpaCy model for dependency parsing
         self.nlp = spacy.load('en_core_web_sm')
-        
+
         # Load sentence transformer for semantic embeddings
         self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
-        
+
         # Initialize one-class SVM for outlier detection
         self.svm = OneClassSVM(kernel='rbf', nu=0.1)
         self.scaler = StandardScaler()
-        
+
         # Initialize patterns dictionary for IT-specific entity recognition
-        sself.patterns = {
+        self.patterns = {
             'DEVICE_ID': [
                 (r'ACO\s*\d+(?:,\d+)?', 'ACO ID'),
                 (r'LANE\s*\d+(?:\s*,\s*\d+)*', 'Lane ID'),
@@ -66,25 +67,13 @@ class DependencyGraphClassifier:
                 (r'\[.*?\]', 'Status Tag'),
                 (r'(?:Not Trading|Trading|Non-Operational)', 'Operational Status'),
                 (r'offline', 'Network Status')
-            ]
-            'LOCATION': [
-                (r'CE\d+', 'Store Code'),
-                (r'\d+\s+\w+\s+(?:Mall|South|North|East|West)', 'Store Location')
             ],
             'ERROR_CODE': [
                 (r'\b\d{4,6}\b(?!\s*(?:Mall|South|North|East|West))', 'Numeric Code')
             ],
-            'STATUS': [
-                (r'\[.*?\]', 'Status Tag'),
-                (r'(?:Not Trading|Trading|Non-Operational)', 'Operational Status')
-            ],
             'EQUIPMENT': [
                 (r'(?:Scale|Printer|UPS|POS|Software|Camera)', 'Equipment Type'),
                 (r'(?:Bakery\s+Scale|bakery\s+scale)', 'Bakery Scale')
-            ],
-            'DEPARTMENT': [
-                (r'Bakery', 'Department'),
-                (r'Deli', 'Department')
             ],
             'ISSUE_TYPE': [
                 (r'non\s*operational', 'Operational Status'),
@@ -104,10 +93,10 @@ class DependencyGraphClassifier:
             edge_types.append(token.dep_)
 
         G = nx.Graph(edges)
-        
+
         # Extract graph-theoretical features
         graph_features = []
-        
+
         # Basic graph metrics
         try:
             graph_features.extend([
@@ -126,7 +115,7 @@ class DependencyGraphClassifier:
         dep_counts = {}
         for dep in edge_types:
             dep_counts[dep] = dep_counts.get(dep, 0) + 1
-        
+
         # Common dependency types in error messages
         key_deps = ['nsubj', 'dobj', 'prep', 'compound', 'amod']
         for dep in key_deps:
@@ -137,40 +126,40 @@ class DependencyGraphClassifier:
     def extract_pattern_features(self, text: str) -> np.ndarray:
         """Extract features based on IT-specific patterns"""
         pattern_features = []
-        
+
         for category, patterns in self.patterns.items():
             category_matches = 0
             for pattern, _ in patterns:
                 if re.search(pattern, text, re.IGNORECASE):
                     category_matches += 1
             pattern_features.append(category_matches)
-            
+
         return np.array(pattern_features)
 
     def extract_features(self, text: str) -> np.ndarray:
         # Parse text using SpaCy
         doc = self.nlp(text)
-        
+
         # Get graph features from dependency parse
         graph_features = self.extract_graph_features(doc)
-        
+
         # Get pattern-based features
         pattern_features = self.extract_pattern_features(text)
-        
+
         # Get semantic embeddings
         semantic_features = self.sentence_transformer.encode(text)
-        
+
         # Additional structural features
         structural_features = np.array([
             len(text),  # Text length
-            len(doc),   # Token count
+            len(doc),  # Token count
             len([token for token in doc if token.is_punct]),  # Punctuation count
             len([token for token in doc if token.like_num]),  # Number count
             len([token for token in doc if token.is_upper]),  # Uppercase token count
             len([token for token in doc if token.pos_ == 'VERB']),  # Verb count
-            len([token for token in doc if token.pos_ == 'NOUN'])   # Noun count
+            len([token for token in doc if token.pos_ == 'NOUN'])  # Noun count
         ])
-        
+
         # Combine all features
         return np.concatenate([
             graph_features,
@@ -183,10 +172,10 @@ class DependencyGraphClassifier:
         """Train the classifier on normal examples"""
         # Extract features for all texts
         features = np.vstack([self.extract_features(text) for text in texts])
-        
+
         # Scale features
         features_scaled = self.scaler.fit_transform(features)
-        
+
         # Fit one-class SVM
         self.svm.fit(features_scaled)
 
@@ -199,13 +188,13 @@ class DependencyGraphClassifier:
     def analyze_structure(self, text: str) -> Dict:
         """Analyze the syntactic structure of the text"""
         doc = self.nlp(text)
-        
+
         analysis = {
             'dependency_structure': [],
             'key_phrases': [],
             'entities': []
         }
-        
+
         # Extract dependency relationships
         for token in doc:
             if token.dep_ != 'punct':
@@ -214,14 +203,14 @@ class DependencyGraphClassifier:
                     'dependency': token.dep_,
                     'head': token.head.text
                 })
-        
+
         # Extract key phrases (noun phrases and verb phrases)
         for chunk in doc.noun_chunks:
             analysis['key_phrases'].append({
                 'text': chunk.text,
                 'type': 'noun_phrase'
             })
-        
+
         # Extract IT-specific entities
         for category, patterns in self.patterns.items():
             for pattern, label in patterns:
@@ -232,30 +221,27 @@ class DependencyGraphClassifier:
                         'type': label,
                         'category': category
                     })
-        
+
         return analysis
+
 
 if __name__ == "__main__":
     # Initialize classifier
     classifier = DependencyGraphClassifier()
-    
+
     # Training data
-    normal_incidents = [
-        "ACO130,132 - SMKTS ACO Software Stuck on Error Message - "Unhandled Exception has Occurred" - [Not Trading ]",
-        "LANE123 â€" Cash Management â€" not registering cash declaration â€" [ Not Trading ]",
-        "Bakery Scale- SV7501SC401- not printing correctly - [non-operational]"
-    ]
-    
+    normal_incidents = []
+
     # Train the classifier
     classifier.fit(normal_incidents)
-    
+
     # Test new incident
-    new_incident = "LANE114 - Software - "Stuck on Enter ID screen" - [Not Trading ]"
+    new_incident = ''
     result = classifier.predict(new_incident)
-    
+
     # Analyze structure
     analysis = classifier.analyze_structure(new_incident)
-    
+
     print("Prediction (1=normal, -1=outlier):", result)
     print("\nStructural Analysis:")
     print(analysis)
