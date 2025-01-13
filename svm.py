@@ -4,17 +4,19 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
-import re
+import re, pickle, os
 from typing import Dict, List
 
 
 class DependencyGraphClassifier:
-    def __init__(self):
+    def __init__(self, spacy_model='en_core_web_sm', transformer_model='all-MiniLM-L6-v2'):
         # Load SpaCy model for dependency parsing
-        self.nlp = spacy.load('en_core_web_sm')
+        self.spacy_model_name = 'en_core_web_sm'
+        self.nlp = spacy.load(spacy_model)
 
         # Load sentence transformer for semantic embeddings
-        self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2')
+        self.transformer_model_name = 'all-MiniLM-L6-v2'
+        self.sentence_transformer = SentenceTransformer(transformer_model)
 
         # Initialize one-class SVM for outlier detection
         self.svm = OneClassSVM(kernel='rbf', nu=0.1)
@@ -82,6 +84,10 @@ class DependencyGraphClassifier:
                 (r'printer\s+says', 'Printer Issue')
             ]
         }
+
+        # Store training data
+        self.fitted = False
+        self.training_texts = None
 
     def extract_graph_features(self, doc) -> np.ndarray:
         """Extract features from dependency parse graph"""
@@ -178,12 +184,65 @@ class DependencyGraphClassifier:
 
         # Fit one-class SVM
         self.svm.fit(features_scaled)
+        self.fitted = True
 
     def predict(self, text: str) -> int:
         """Predict if a text is an outlier (-1) or normal (1)"""
         features = self.extract_features(text)
         features_scaled = self.scaler.transform(features.reshape(1, -1))
         return self.svm.predict(features_scaled)[0]
+
+    def save(self, path: str) -> None:
+        """Save model to disk
+
+        Args:
+            path: Path to save the model
+        """
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # Create a dictionary of components to save
+        save_dict = {
+            'spacy_model_name': self.spacy_model_name,
+            'transformer_model_name': self.transformer_model_name,
+            'svm': self.svm,
+            'scaler': self.scaler,
+            'patterns': self.patterns,
+            'fitted': self.fitted,
+            'training_texts': self.training_texts
+        }
+
+        # Save to disk
+        with open(path, 'wb') as f:
+            pickle.dump(save_dict, f)
+
+    @classmethod
+    def load(cls, path: str) -> 'DependencyGraphClassifier':
+        """Load model from disk
+
+        Args:
+            path: Path to load the model from
+
+        Returns:
+            DependencyGraphClassifier: Loaded classifier
+        """
+        # Load components from disk
+        with open(path, 'rb') as f:
+            components = pickle.load(f)
+
+        # Create new instance with saved model names
+        instance = cls(
+            spacy_model=components['spacy_model_name'],
+            transformer_model=components['transformer_model_name']
+        )
+
+        # Restore components
+        instance.svm = components['svm']
+        instance.scaler = components['scaler']
+        instance.patterns = components['patterns']
+        instance.fitted = components['fitted']
+        instance.training_texts = components['training_texts']
+
+        return instance
 
     def analyze_structure(self, text: str) -> Dict:
         """Analyze the syntactic structure of the text"""
@@ -230,17 +289,26 @@ if __name__ == "__main__":
     classifier = DependencyGraphClassifier()
 
     # Training data
-    normal_incidents = []
+    normal_incidents = [
+        'ACO130,132 - SMKTS ACO Software Stuck on Error Message - "Unhandled Exception has Occurred" - [Not Trading ]',
+        'LANE123 â€" Cash Management â€" not registering cash declaration â€"[Not Trading]',
+        "Bakery Scale- SV7501SC401- not printing correctly - [non-operational]"
+    ]
 
     # Train the classifier
     classifier.fit(normal_incidents)
 
+    classifier.save('saved_models/model.pkl')
+
+    # Load a model
+    loaded_classifier = DependencyGraphClassifier.load('saved_models/model.pkl')
+
     # Test new incident
-    new_incident = ''
-    result = classifier.predict(new_incident)
+    new_incident = 'LANE114 - Software - "Stuck on Enter ID screen - [Not Trading ]'
+    result = loaded_classifier.predict(new_incident)
 
     # Analyze structure
-    analysis = classifier.analyze_structure(new_incident)
+    analysis = loaded_classifier.analyze_structure(new_incident)
 
     print("Prediction (1=normal, -1=outlier):", result)
     print("\nStructural Analysis:")
