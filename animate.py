@@ -60,3 +60,18 @@ def super_fancy_loading_animation():
         
         dots_area.markdown(gradient_text, unsafe_allow_html=True)
         time.sleep(0.05)
+
+
+
+"""
+/* User message specific styling */
+        .user-message {
+            background-color: #2b313e;
+            border-radius: 15px;
+            padding: 10px 15px;
+            margin-left: auto;  /* Push message to the right */
+            margin-right: 0;
+            max-width: fit-content;  /* Adjust width to content */
+            text-align: right;
+        }
+"""
