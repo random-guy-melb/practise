@@ -1,66 +1,96 @@
-def defect_analysis_animation():
-    # Professional spinner frames
+def super_fancy_loading_animation():
     frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    
-    # Technical process messages relevant to RAG and defect analysis
-    words = [
-        "🔍 Retrieving Defect Records",
-        "📊 Processing Historical Data",
-        "🔄 Analyzing Patterns",
-        "📈 Computing Similarity Scores",
-        "🎯 Matching Similar Cases",
-        "📑 Generating Insights"
+    phrases = [
+        "Analyzing market insights...",
+        "Optimizing solutions...",
+        "Processing business intelligence...",
+        "Generating strategic recommendations...",
+        "Evaluating opportunities...",
+        "Synthesizing data points...",
+        "Calculating optimal outcomes...",
+        "Enhancing business value...",
+        "Streamlining workflows...",
+        "Maximizing efficiency..."
     ]
     
     spinner = cycle(frames)
-    i = 0
-    word_idx = 0
+    phrase_index = 0
+    fade_counter = 0
+    is_fading = False
     
     while not future.done():
-        current_word = words[word_idx]
-        displayed_word = current_word[:((i//2) % (len(current_word) + 1))]
         frame = next(spinner)
+        current_phrase = phrases[phrase_index]
         
-        # Professional gradient using reliability-themed colors
-        gradient_text = f"""<div style="
-            background: linear-gradient(
-                45deg,
-                #2C3E50,  /* Dark blue */
-                #3498DB,  /* Professional blue */
-                #2980B9   /* Trustworthy blue */
-            );
-            background-size: 200% 200%;
-            animation: gradient 3s ease infinite;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            font-size: 20px;
-            font-weight: bold;
-            font-family: 'Arial', sans-serif;
-            padding: 20px;
+        # Handle fading animation
+        if fade_counter >= 30:  # 3 seconds (30 * 0.1s)
+            is_fading = True
+            opacity = max(0, 1 - ((fade_counter - 30) / 5))  # Fade out over 0.5s
+        else:
+            is_fading = False
+            opacity = 1
+            
+        # Update counters and phrase
+        fade_counter += 1
+        if fade_counter >= 35:  # 3.5 seconds total
+            fade_counter = 0
+            phrase_index = (phrase_index + 1) % len(phrases)
+            
+        # Create the HTML with fade effect
+        gradient_text = f"""
+        <div style="
+            font-size: 24px;
+            font-family: sans-serif;
+            padding: 3px 0;
             text-align: center;
+            margin: 20px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             ">
-            <style>
-                @keyframes gradient {{
-                    0% {{ background-position: 0% 50%; }}
-                    100% {{ background-position: 100% 50%; }}
-                }}
-            </style>
             <div style="
-                border: 2px solid #3498DB;
-                border-radius: 5px;
-                padding: 15px;
-                margin: 10px;
-                box-shadow: 0 0 10px rgba(52, 152, 219, 0.2);
-                ">
-                {displayed_word} {frame}
+                opacity: {opacity};
+                transition: opacity 0.5s ease;
+                color: rgb(55, 65, 81);
+                font-weight: 500;
+                margin-bottom: 16px;
+                ">{current_phrase}</div>
+            <div style="display: flex; gap: 8px; justify-content: center;">
+                <span style="
+                    width: 8px;
+                    height: 8px;
+                    background-color: rgb(59, 130, 246);
+                    border-radius: 50%;
+                    animation: pulse 1s infinite;
+                    animation-delay: 0s;
+                    "></span>
+                <span style="
+                    width: 8px;
+                    height: 8px;
+                    background-color: rgb(59, 130, 246);
+                    border-radius: 50%;
+                    animation: pulse 1s infinite;
+                    animation-delay: 0.2s;
+                    "></span>
+                <span style="
+                    width: 8px;
+                    height: 8px;
+                    background-color: rgb(59, 130, 246);
+                    border-radius: 50%;
+                    animation: pulse 1s infinite;
+                    animation-delay: 0.4s;
+                    "></span>
             </div>
-        </div>"""
+        </div>
+        <style>
+            @keyframes pulse {
+                0% { transform: scale(0.8); opacity: 0.5; }
+                50% { transform: scale(1.2); opacity: 1; }
+                100% { transform: scale(0.8); opacity: 0.5; }
+            }
+        </style>
+        """
         
         dots_area.markdown(gradient_text, unsafe_allow_html=True)
-        
-        i += 1
-        if i % (len(current_word) * 2 + 15) == 0:
-            word_idx = (word_idx + 1) % len(words)
-            i = 0
-            
         time.sleep(0.1)
