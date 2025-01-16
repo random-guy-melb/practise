@@ -45,17 +45,31 @@ def super_fancy_loading_animation():
         
         gradient_text = f"""
         <div style="
-            font-size: 24px;
-            font-family: monospace;
+            font-size: 22px;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-weight: 400;
+            letter-spacing: -0.2px;
             padding: 3px 0;
             text-align: left;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 12px;
             ">
-            <span style="color: rgb(55, 65, 81);">{displayed_text}{dots}</span>
-            <span style="color: rgb(255, 75, 75);">{frame}</span>
+            <span style="
+                color: rgb(45, 55, 72);
+                text-rendering: optimizeLegibility;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+                ">{displayed_text}{dots}</span>
+            <span style="
+                color: rgb(255, 75, 75);
+                font-size: 20px;
+                transform: translateY(-1px);
+                ">{frame}</span>
         </div>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+        </style>
         """
         
         dots_area.markdown(gradient_text, unsafe_allow_html=True)
