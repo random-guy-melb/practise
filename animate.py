@@ -64,7 +64,21 @@ def super_fancy_loading_animation():
 
 
 """
-/* User message specific styling */
+ /* Container for the entire chat interface */
+        .stChatFloatingInputContainer {
+            padding-bottom: 20px;
+        }
+        
+        /* Message container styling */
+        .chat-message {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* User message specific styling */
         .user-message {
             background-color: #2b313e;
             border-radius: 15px;
@@ -73,5 +87,15 @@ def super_fancy_loading_animation():
             margin-right: 0;
             max-width: fit-content;  /* Adjust width to content */
             text-align: right;
+        }
+        
+        /* Assistant message specific styling */
+        .assistant-message {
+            background-color: #343541;
+            border-radius: 15px;
+            padding: 10px 15px;
+            margin-right: auto;  /* Push message to the left */
+            margin-left: 0;
+            max-width: 80%;  /* Limit width for readability */
         }
 """
