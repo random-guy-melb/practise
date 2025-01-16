@@ -22,9 +22,16 @@ def super_fancy_loading_animation():
     while not future.done():
         frame = next(spinner)
         current_phrase = phrases[phrase_index]
-        max_dots = 3
         
-        # Handle typing effect including dots
+        # Get current display text
+        if typing_index <= len(current_phrase):
+            displayed_text = current_phrase[:typing_index]
+            dots = ""
+        else:
+            displayed_text = current_phrase
+            dots = "." * min(typing_index - len(current_phrase), max_dots)
+        
+        # Increment typing index
         if typing_index < len(current_phrase) + max_dots:
             typing_index += 1
         
@@ -33,21 +40,8 @@ def super_fancy_loading_animation():
             fade_counter = 0
             phrase_index = (phrase_index + 1) % len(phrases)
             typing_index = 0  # Reset typing index for new phrase
-            
+        
         fade_counter += 1
-        
-        # Get currently visible text and dots
-        visible_text = current_phrase[:min(typing_index, len(current_phrase))]
-        
-        # Calculate dots - now capped at max_dots
-        if typing_index > len(current_phrase):
-            dots_count = min(typing_index - len(current_phrase), max_dots)
-            dots = "." * dots_count
-        else:
-            dots = ""
-        
-        # Create the typing effect for the current text
-        displayed_text = visible_text[:((i//2) % (len(visible_text) + 1))]
         
         gradient_text = f"""
         <div style="
@@ -65,6 +59,4 @@ def super_fancy_loading_animation():
         """
         
         dots_area.markdown(gradient_text, unsafe_allow_html=True)
-        
-        i += 1
         time.sleep(0.05)
