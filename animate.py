@@ -47,15 +47,33 @@ def super_fancy_loading_animation():
         
         gradient_text = f"""
         <div style="
-            font-size: 24px;
-            font-family: monospace;
-            padding: 3px 0;
-            text-align: left;
             display: flex;
-            align-items: center;
-            color: rgb(55, 65, 81);
+            flex-direction: column;
+            gap: 8px;
             ">
-            <span>{visible_text}{dots}</span>
+            <div style="
+                font-size: 24px;
+                font-family: monospace;
+                padding: 3px 0;
+                text-align: left;
+                display: flex;
+                align-items: center;
+                color: rgb(55, 65, 81);
+                ">
+                <span>{visible_text}{dots}</span>
+            </div>
+            <div style="
+                font-size: 14px;
+                font-family: monospace;
+                padding: 3px 0;
+                text-align: left;
+                margin-left: 0;
+                display: flex;
+                align-items: center;
+                ">
+                <span style="color: black;">Processing your request{dots}</span>
+                <span style="color: rgb(255, 75, 75); margin-left: 4px;">{frame}</span>
+            </div>
         </div>
         """
         
