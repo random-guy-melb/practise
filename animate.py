@@ -17,6 +17,7 @@ def super_fancy_loading_animation():
     phrase_index = 0
     fade_counter = 0
     typing_index = 0
+    i = 0
     
     while not future.done():
         frame = next(spinner)
@@ -45,37 +46,25 @@ def super_fancy_loading_animation():
         else:
             dots = ""
         
+        # Create the typing effect for the current text
+        displayed_text = visible_text[:((i//2) % (len(visible_text) + 1))]
+        
         gradient_text = f"""
         <div style="
+            font-size: 24px;
+            font-family: monospace;
+            padding: 3px 0;
+            text-align: left;
             display: flex;
-            flex-direction: column;
+            align-items: center;
             gap: 8px;
             ">
-            <div style="
-                font-size: 24px;
-                font-family: monospace;
-                padding: 3px 0;
-                text-align: left;
-                display: flex;
-                align-items: center;
-                color: rgb(55, 65, 81);
-                ">
-                <span>{visible_text}{dots}</span>
-            </div>
-            <div style="
-                font-size: 14px;
-                font-family: monospace;
-                padding: 3px 0;
-                text-align: left;
-                margin-left: 0;
-                display: flex;
-                align-items: center;
-                ">
-                <span style="color: black;">Processing your request{dots}</span>
-                <span style="color: rgb(255, 75, 75); margin-left: 4px;">{frame}</span>
-            </div>
+            <span style="color: rgb(55, 65, 81);">{displayed_text}{dots}</span>
+            <span style="color: rgb(255, 75, 75);">{frame}</span>
         </div>
         """
         
         dots_area.markdown(gradient_text, unsafe_allow_html=True)
+        
+        i += 1
         time.sleep(0.05)
