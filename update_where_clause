@@ -1,7 +1,6 @@
 from thefuzz import process
 from typing import Dict, List, Tuple, Any, Union
 
-
 def get_closest_match(value: str, valid_values_lower: Dict[str, str],
                       threshold: int = 98) -> Tuple[Union[str, List[str]], float]:
     """
@@ -32,7 +31,6 @@ def get_closest_match(value: str, valid_values_lower: Dict[str, str],
         return (best_matches[0] if len(best_matches) == 1 else best_matches, highest_score)
     return value, highest_score
 
-
 def update_values_in_clause(
         where_clause: Dict[str, Any],
         target_key: str,
@@ -53,6 +51,7 @@ def update_values_in_clause(
         - Updated where clause (with ambiguous matches as lists)
         - List of replacements made (original_value, corrected_value(s), score)
     """
+    OPERATORS = {'$eq', '$ne', '$gt', '$gte', '$lt', '$lte'}
     valid_values_lower = {val.lower(): val for val in valid_values}
     replacements = []
 
@@ -63,7 +62,19 @@ def update_values_in_clause(
         updated_clause = {}
         for key, value in clause.items():
             if key == target_key:
-                if isinstance(value, list):
+                if isinstance(value, dict) and any(op in value for op in OPERATORS):
+                    # Handle operator cases
+                    updated_clause[key] = {}
+                    for op, op_value in value.items():
+                        if isinstance(op_value, str):
+                            corrected_value, score = get_closest_match(op_value, valid_values_lower, threshold)
+                            if corrected_value != op_value:
+                                replacements.append((op_value, corrected_value, score))
+                            updated_clause[key][op] = corrected_value
+                        else:
+                            updated_clause[key][op] = op_value
+                elif isinstance(value, list):
+                    # Handle list of values
                     corrected_values = []
                     for val in value:
                         if isinstance(val, str):
@@ -75,6 +86,7 @@ def update_values_in_clause(
                             corrected_values.append(val)
                     updated_clause[key] = corrected_values
                 elif isinstance(value, str):
+                    # Handle single string value
                     corrected_value, score = get_closest_match(value, valid_values_lower, threshold)
                     if corrected_value != value:
                         replacements.append((value, corrected_value, score))
@@ -97,14 +109,14 @@ def update_values_in_clause(
     updated_where_clause = _recursive_update(where_clause)
     return updated_where_clause, replacements
 
-
-# Example usage with ambiguous matches:
+# Example usage with operators:
 valid_categories = ["Network Support", "Network Security", "Network Services", "Tablet"]
 where_clause = {
     "$or": [
-        {"category": "lapt"},
+        {"category": {"$eq": "network"}},
         {"$and": [
-            {"category": ["network", "tab"]},
+            {"category": {"$ne": "tab"}},
+            {"category": ["network", "support"]},
             {"price": {"$lt": 1000}}
         ]}
     ]
