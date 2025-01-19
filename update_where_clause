@@ -3,20 +3,7 @@ from typing import Dict, List, Tuple, Any, Union
 
 def get_closest_match(value: str, valid_values_lower: Dict[str, str],
                       threshold: int = 98) -> Tuple[Union[str, List[str]], float]:
-    """
-    Find closest match(es) using lowercase comparison
-    Returns multiple matches if they have the same highest score
-
-    Args:
-        value: The value to match
-        valid_values_lower: Mapping of lowercase values to original case
-        threshold: Minimum similarity score (0-100) to consider a match
-
-    Returns:
-        Tuple containing:
-        - Either a single matched value or list of matched values if multiple matches have same score
-        - Match score
-    """
+    """Previous code remains same"""
     # Get all matches with scores
     matches = process.extract(value.lower(), valid_values_lower.keys())
 
@@ -37,20 +24,6 @@ def update_values_in_clause(
         valid_values: List[str],
         threshold: int = 80
 ) -> Tuple[Dict[str, Any], List[Tuple[str, Union[str, List[str]], float]]]:
-    """
-    Recursively updates specified key's values in a where clause with closest matching values
-
-    Args:
-        where_clause: The where clause dictionary to update
-        target_key: The key whose values need to be corrected
-        valid_values: List of valid values in their original case
-        threshold: Minimum similarity score for fuzzy matching
-
-    Returns:
-        Tuple containing:
-        - Updated where clause (with ambiguous matches as lists)
-        - List of replacements made (original_value, corrected_value(s), score)
-    """
     OPERATORS = {'$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$nin'}
     valid_values_lower = {val.lower(): val for val in valid_values}
     replacements = []
@@ -63,11 +36,9 @@ def update_values_in_clause(
         for key, value in clause.items():
             if key == target_key:
                 if isinstance(value, dict) and any(op in value for op in OPERATORS):
-                    # Handle operator cases
                     updated_clause[key] = {}
                     for op, op_value in value.items():
                         if op in ['$in', '$nin']:
-                            # Handle array operators
                             if isinstance(op_value, list):
                                 corrected_values = []
                                 for val in op_value:
@@ -75,18 +46,31 @@ def update_values_in_clause(
                                         corrected_val, score = get_closest_match(val, valid_values_lower, threshold)
                                         if corrected_val != val:
                                             replacements.append((val, corrected_val, score))
-                                        corrected_values.append(corrected_val)
+                                        # Extend list if multiple matches, append if single match
+                                        if isinstance(corrected_val, list):
+                                            corrected_values.extend(corrected_val)
+                                        else:
+                                            corrected_values.append(corrected_val)
                                     else:
                                         corrected_values.append(val)
                                 updated_clause[key][op] = corrected_values
                             else:
-                                # Handle case where $in/$nin value is not a list
                                 updated_clause[key][op] = op_value
                         elif isinstance(op_value, str):
                             corrected_value, score = get_closest_match(op_value, valid_values_lower, threshold)
                             if corrected_value != op_value:
                                 replacements.append((op_value, corrected_value, score))
-                            updated_clause[key][op] = corrected_value
+                            
+                            # Handle operator conversion for $eq and $ne
+                            if isinstance(corrected_value, list):
+                                if op == '$eq':
+                                    updated_clause[key]['$in'] = corrected_value
+                                elif op == '$ne':
+                                    updated_clause[key]['$nin'] = corrected_value
+                                else:
+                                    updated_clause[key][op] = corrected_value
+                            else:
+                                updated_clause[key][op] = corrected_value
                         else:
                             updated_clause[key][op] = op_value
                 elif isinstance(value, list):
@@ -96,7 +80,11 @@ def update_values_in_clause(
                             corrected_val, score = get_closest_match(val, valid_values_lower, threshold)
                             if corrected_val != val:
                                 replacements.append((val, corrected_val, score))
-                            corrected_values.append(corrected_val)
+                            # Extend list if multiple matches, append if single match
+                            if isinstance(corrected_val, list):
+                                corrected_values.extend(corrected_val)
+                            else:
+                                corrected_values.append(corrected_val)
                         else:
                             corrected_values.append(val)
                     updated_clause[key] = corrected_values
@@ -123,10 +111,12 @@ def update_values_in_clause(
     updated_where_clause = _recursive_update(where_clause)
     return updated_where_clause, replacements
 
-# Example usage with $in and $nin operators:
+# Example usage:
 valid_categories = ["Network Support", "Network Security", "Network Services", "Tablet"]
 where_clause = {
     "$or": [
+        {"category": {"$eq": "network"}},  # This will be converted to $in since "network" matches multiple values
+        {"category": {"$ne": "network"}},  # This will be converted to $nin
         {"category": {"$in": ["network", "tab"]}},
         {"$and": [
             {"category": {"$nin": ["support", "security"]}},
@@ -136,17 +126,4 @@ where_clause = {
 }
 
 corrected_clause, replacements = update_values_in_clause(
-    where_clause, "category", valid_categories, threshold=90
-)
-
-print("\nReplacements made:")
-for original, corrected, score in replacements:
-    if isinstance(corrected, list):
-        print(f"'{original}' -> Multiple matches with score {score}:")
-        for match in corrected:
-            print(f"  - '{match}'")
-    else:
-        print(f"'{original}' -> '{corrected}' (score: {score})")
-
-print("\nCorrected where clause:")
-print(corrected_clause)
+    where_clause, "category", valid_categories, threshold=90)
