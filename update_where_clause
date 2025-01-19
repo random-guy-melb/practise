@@ -51,7 +51,7 @@ def update_values_in_clause(
         - Updated where clause (with ambiguous matches as lists)
         - List of replacements made (original_value, corrected_value(s), score)
     """
-    OPERATORS = {'$eq', '$ne', '$gt', '$gte', '$lt', '$lte'}
+    OPERATORS = {'$eq', '$ne', '$gt', '$gte', '$lt', '$lte', '$in', '$nin'}
     valid_values_lower = {val.lower(): val for val in valid_values}
     replacements = []
 
@@ -66,7 +66,23 @@ def update_values_in_clause(
                     # Handle operator cases
                     updated_clause[key] = {}
                     for op, op_value in value.items():
-                        if isinstance(op_value, str):
+                        if op in ['$in', '$nin']:
+                            # Handle array operators
+                            if isinstance(op_value, list):
+                                corrected_values = []
+                                for val in op_value:
+                                    if isinstance(val, str):
+                                        corrected_val, score = get_closest_match(val, valid_values_lower, threshold)
+                                        if corrected_val != val:
+                                            replacements.append((val, corrected_val, score))
+                                        corrected_values.append(corrected_val)
+                                    else:
+                                        corrected_values.append(val)
+                                updated_clause[key][op] = corrected_values
+                            else:
+                                # Handle case where $in/$nin value is not a list
+                                updated_clause[key][op] = op_value
+                        elif isinstance(op_value, str):
                             corrected_value, score = get_closest_match(op_value, valid_values_lower, threshold)
                             if corrected_value != op_value:
                                 replacements.append((op_value, corrected_value, score))
@@ -74,7 +90,6 @@ def update_values_in_clause(
                         else:
                             updated_clause[key][op] = op_value
                 elif isinstance(value, list):
-                    # Handle list of values
                     corrected_values = []
                     for val in value:
                         if isinstance(val, str):
@@ -86,7 +101,6 @@ def update_values_in_clause(
                             corrected_values.append(val)
                     updated_clause[key] = corrected_values
                 elif isinstance(value, str):
-                    # Handle single string value
                     corrected_value, score = get_closest_match(value, valid_values_lower, threshold)
                     if corrected_value != value:
                         replacements.append((value, corrected_value, score))
@@ -109,14 +123,13 @@ def update_values_in_clause(
     updated_where_clause = _recursive_update(where_clause)
     return updated_where_clause, replacements
 
-# Example usage with operators:
+# Example usage with $in and $nin operators:
 valid_categories = ["Network Support", "Network Security", "Network Services", "Tablet"]
 where_clause = {
     "$or": [
-        {"category": {"$eq": "network"}},
+        {"category": {"$in": ["network", "tab"]}},
         {"$and": [
-            {"category": {"$ne": "tab"}},
-            {"category": ["network", "support"]},
+            {"category": {"$nin": ["support", "security"]}},
             {"price": {"$lt": 1000}}
         ]}
     ]
