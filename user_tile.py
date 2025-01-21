@@ -1,8 +1,7 @@
 st.markdown("""
 <style>
-/* Hide user and bot avatars (optional) */
-[data-testid="stChatMessageAvatarUser"],
-[data-testid="stChatMessageAvatarBot"] {
+/* Hide user avatar (optional) */
+[data-testid="stChatMessageAvatarUser"] {
     display: none !important;
 }
 
@@ -12,26 +11,23 @@ st.markdown("""
     flex-direction: row-reverse;
     align-items: end;
 }
+
 [data-testid="stChatMessageAvatarUser"] + [data-testid="stChatMessageContent"] {
     text-align: right;
 }
 
-/* 
-   Apply styling ONLY to user messages using:
-   - A gradient background for a "glossy" look
-   - Black text for contrast
-   - Subtle border and box shadow for depth
-*/
+/* Style only user messages */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
     background: linear-gradient(135deg, #E86D5C 0%, #F9B3A4 100%);
     color: black;
     border-radius: 10px;
     padding: 12px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.2); /* Subtle border */
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);   /* Soft drop shadow */
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    min-height: 60px;
 }
 
-/* Ensure no conflicting backgrounds inside the message */
+/* Ensure no conflicting backgrounds inside user messages */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) > * {
     background: transparent !important;
 }
