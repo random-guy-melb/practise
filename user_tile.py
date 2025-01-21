@@ -1,6 +1,3 @@
-
-st.markdown("""
-<style>
 /* Hide the user avatar (optional) */
 [data-testid="stChatMessageAvatarUser"] {
     display: none !important;
@@ -32,12 +29,26 @@ st.markdown("""
     min-height: 50px;          
 }
 
-/* Assistant message styling - with rounded edges */
+/* Assistant message container and content styling */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
     background: #f7f7f8;
     border-radius: 10px;
     margin: 8px 0;
     padding: 12px 16px;
+    width: 100%;
+    min-height: 50px;
+    color: rgb(45, 55, 72);
+    font-weight: bold;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Style for the empty container during animation */
+.element-container:has([data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"])) {
+    background: #f7f7f8;
+    border-radius: 10px;
+    margin: 8px 0;
+    min-height: 50px;
     width: 100%;
 }
 
@@ -53,5 +64,3 @@ st.markdown("""
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) > * {
     background: transparent !important;
 }
-</style>
-""", unsafe_allow_html=True)
