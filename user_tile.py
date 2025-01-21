@@ -1,62 +1,55 @@
+
 st.markdown("""
 <style>
-/* Hide avatars */
-[data-testid="stChatMessageAvatarUser"],
+/* Hide the user avatar (optional) */
+[data-testid="stChatMessageAvatarUser"] {
+    display: none !important;
+}
+
+/* Hide the assistant avatar */
 [data-testid="stChatMessageAvatarAssistant"] {
     display: none !important;
 }
 
-/* User message container */
+/* User message container styling */
 .stChatMessage:has([data-testid="stChatMessageAvatarUser"]) {
-    display: inline-flex;
-    align-items: center;
+    display: inline-flex; 
+    align-items: center;       
+    margin-left: auto; 
+    margin-right: 1rem; 
     max-width: 70%;
-    vertical-align: top;
-    margin-left: auto;
-    margin-right: 1rem;
-    margin-bottom: 1rem;
+    vertical-align: top;       
 }
 
-/* Assistant message container */
-.stChatMessage:has([data-testid="stChatMessageAvatarAssistant"]) {
-    display: block;
-    margin-right: 2rem;
-    margin-left: 2rem;
-    margin-bottom: 1rem;
-    vertical-align: top;
-}
-
-/* User message bubble */
+/* User message bubble styling */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
     background: linear-gradient(135deg, #E86D5C 0%, #F9B3A4 100%);
     color: black;
-    border-radius: 15px;
-    padding: 16px 20px;
+    border-radius: 10px;
+    padding: 12px 16px; 
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    min-height: 50px;
+    min-height: 50px;          
 }
 
-/* Assistant message bubble */
+/* Assistant message styling - with rounded edges */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
-    background: white;
-    color: black;
-    border-radius: 15px;
-    padding: 16px 20px;
-    border: 1px solid #e5e5e5;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-    min-height: 50px;
-    width: calc(100% - 4rem);
+    background: #f7f7f8;
+    border-radius: 10px;
+    margin: 8px 0;
+    padding: 12px 16px;
+    width: 100%;
 }
 
-/* Text alignment within bubbles */
-[data-testid="stChatMessageAvatarUser"] + [data-testid="stChatMessageContent"],
-[data-testid="stChatMessageAvatarAssistant"] + [data-testid="stChatMessageContent"] {
+/* Text alignment and transparent backgrounds */
+[data-testid="stChatMessageAvatarUser"] + [data-testid="stChatMessageContent"] {
     text-align: left !important;
 }
 
-/* Keep bubble interiors transparent */
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) > *,
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) > * {
+    background: transparent !important;
+}
+
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) > * {
     background: transparent !important;
 }
