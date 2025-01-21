@@ -17,29 +17,39 @@ def super_fancy_loading_animation():
     phrase_index = 0
     fade_counter = 0
     typing_index = 0
-    i = 0
+    opacity = 0  # Start with 0 opacity for fade-in
+    fade_in_speed = 0.1  # Controls how quickly text fades in
+    max_dots = 3
     
     while not future.done():
         frame = next(spinner)
         current_phrase = phrases[phrase_index]
         
-        # Get current display text
+        # Handle opacity for fade-in effect
+        if opacity < 1:
+            opacity = min(1, opacity + fade_in_speed)
+        
+        # Get current display text with smooth typing effect
         if typing_index <= len(current_phrase):
             displayed_text = current_phrase[:typing_index]
             dots = ""
         else:
             displayed_text = current_phrase
-            dots = "." * min(typing_index - len(current_phrase), max_dots)
+            dots = "." * (((typing_index - len(current_phrase)) // 5) % (max_dots + 1))
         
-        # Increment typing index
-        if typing_index < len(current_phrase) + max_dots:
+        # Smoother typing speed with easing
+        if typing_index < len(current_phrase):
+            typing_speed = max(1, int((len(current_phrase) - typing_index) / 5))
+            typing_index += typing_speed
+        else:
             typing_index += 1
         
-        # Handle phrase transition
-        if fade_counter >= 15:  # 1.5 seconds display time
+        # Handle phrase transition with fade-out
+        if fade_counter >= 20:  # 2 seconds display time
             fade_counter = 0
             phrase_index = (phrase_index + 1) % len(phrases)
-            typing_index = 0  # Reset typing index for new phrase
+            typing_index = 0
+            opacity = 0  # Reset opacity for next phrase
         
         fade_counter += 1
         
@@ -54,6 +64,8 @@ def super_fancy_loading_animation():
             display: flex;
             align-items: center;
             gap: 12px;
+            opacity: {opacity};
+            transition: opacity 0.3s ease-in-out;
             ">
             <span style="
                 color: rgb(45, 55, 72);
@@ -65,51 +77,18 @@ def super_fancy_loading_animation():
                 color: rgb(255, 75, 75);
                 font-size: 20px;
                 transform: translateY(-1px);
+                animation: pulse 1s infinite ease-in-out;
                 ">{frame}</span>
         </div>
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+            @keyframes pulse {
+                0% { opacity: 0.7; }
+                50% { opacity: 1; }
+                100% { opacity: 0.7; }
+            }
         </style>
         """
         
         dots_area.markdown(gradient_text, unsafe_allow_html=True)
         time.sleep(0.05)
-
-
-
-"""
- /* Container for the entire chat interface */
-        .stChatFloatingInputContainer {
-            padding-bottom: 20px;
-        }
-        
-        /* Message container styling */
-        .chat-message {
-            padding: 1rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1rem;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        /* User message specific styling */
-        .user-message {
-            background-color: #2b313e;
-            border-radius: 15px;
-            padding: 10px 15px;
-            margin-left: auto;  /* Push message to the right */
-            margin-right: 0;
-            max-width: fit-content;  /* Adjust width to content */
-            text-align: right;
-        }
-        
-        /* Assistant message specific styling */
-        .assistant-message {
-            background-color: #343541;
-            border-radius: 15px;
-            padding: 10px 15px;
-            margin-right: auto;  /* Push message to the left */
-            margin-left: 0;
-            max-width: 80%;  /* Limit width for readability */
-        }
-"""
